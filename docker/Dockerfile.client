@@ -1,0 +1,13 @@
+# CLIENT image. Wraps the system ssh -> includes openssh-client.
+# Build context = repo root.
+FROM golang:1.23-alpine AS build
+WORKDIR /src
+COPY core/ ./core/
+WORKDIR /src/core
+ARG VERSION=dev
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/tunnelkit-client ./cmd/client
+
+FROM alpine:3.20
+RUN apk add --no-cache openssh-client ca-certificates tzdata
+COPY --from=build /out/tunnelkit-client /usr/local/bin/tunnelkit-client
+ENTRYPOINT ["tunnelkit-client"]

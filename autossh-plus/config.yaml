@@ -1,0 +1,51 @@
+# Home Assistant add-on manifest.
+# Uses the image pre-built by CI (image:), so it does NOT compile on the device
+# and it is the SAME image as the Docker one. The first time you push, the
+# workflow publishes the images to GHCR and the add-on can be installed.
+name: Autossh Plus
+version: "0.1.0"
+slug: autossh_plus
+description: Robust reverse SSH tunnel to your server, with /metrics and speedtest
+url: https://github.com/adriansanchis87/tunnelkit
+image: ghcr.io/adriansanchis87/tunnelkit-client
+arch:
+  - aarch64
+  - amd64
+  - armv7
+  - armhf
+  - i386
+# starts on boot and is watched: if the container dies, the Supervisor brings
+# it back.
+boot: auto
+startup: services
+watchdog: "tcp://[HOST]:[PORT:9100]"
+host_network: true
+map:
+  - ssl
+  - config:rw
+ports:
+  "9100/tcp": null
+options:
+  host: ""
+  ssh_port: 2222
+  username: tunnel
+  key_file: /ssl/id_tunnel
+  remote_forwarding:
+    - "8060:localhost:8123"
+  server_alive_interval: 20
+  server_alive_count_max: 3
+  other_ssh_options: ""
+  stats_forward_port: 0
+  speedtest_forward_port: 0
+schema:
+  host: str
+  ssh_port: port
+  username: str
+  key_file: str
+  remote_forwarding:
+    - str
+  server_alive_interval: int(5,300)
+  server_alive_count_max: int(1,10)
+  other_ssh_options: str?
+  stats_forward_port: int(0,65535)
+  speedtest_forward_port: int(0,65535)

@@ -1,0 +1,12 @@
+# Tunnel SERVER image (SSH embedded in Go, no extra binaries).
+FROM golang:1.23-alpine AS build
+WORKDIR /src
+COPY core/ ./core/
+WORKDIR /src/core
+ARG VERSION=dev
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/tunnelkit-server ./cmd/server
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates tzdata
+COPY --from=build /out/tunnelkit-server /usr/local/bin/tunnelkit-server
+ENTRYPOINT ["tunnelkit-server"]

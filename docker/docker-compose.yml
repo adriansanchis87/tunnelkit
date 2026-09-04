@@ -1,0 +1,17 @@
+# tunnelkit client (e.g. on a Docker host).
+services:
+  tunnelkit-client:
+    image: ghcr.io/adriansanchis87/tunnelkit-client:latest
+    container_name: tunnelkit-client
+    restart: unless-stopped
+    network_mode: host            # to reach the local services being forwarded
+    environment:
+      TK_HOST: example.com
+      TK_SSH_PORT: "2223"
+      TK_USER: tunnel
+      TK_KEY_FILE: /keys/id_ed25519   # the machine's existing SSH key, mounted
+      TK_FORWARDS: "8040:localhost:8123"    # comma-separated for several
+      TK_STATS_FORWARD_PORT: "0"            # e.g. 8048 so the server can read /metrics
+      TK_SPEEDTEST_FORWARD_PORT: "0"        # e.g. 8047 to measure the tunnel
+    volumes:
+      - /home/user/.ssh:/keys:ro

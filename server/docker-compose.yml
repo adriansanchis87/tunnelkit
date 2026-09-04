@@ -1,0 +1,19 @@
+# tunnelkit tunnel server. SSH embedded in Go, on 2223.
+services:
+  tunnelkit-server:
+    image: ghcr.io/adriansanchis87/tunnelkit-server:latest
+    container_name: tunnelkit-server
+    restart: always
+    environment:
+      TK_SERVER_SSH_ADDR: ":2223"
+      TK_SERVER_HOST_KEY: /data/host_key            # created automatically on first run
+      TK_SERVER_AUTHORIZED_KEYS: /data/authorized_keys  # pubkeys + permitlisten
+      TK_SERVER_MONITOR_ADDR: ":9090"               # web monitor panel (empty = off)
+      TK_SERVER_TRAFFIC_FILE: /data/traffic.json    # per-port/per-day traffic
+    volumes:
+      - ./data:/data
+    ports:
+      - "2223:2223"
+      - "9090:9090"
+    # The speedtest initiator lives in the same image:
+    #   docker exec tunnelkit-server tunnelkit-server speedtest --speedtest-addr localhost:8047
