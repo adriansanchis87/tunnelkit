@@ -1,12 +1,14 @@
 #!/bin/sh /etc/rc.common
-# procd init for tunnelkit on OpenWrt. respawn = procd brings it back if it dies.
+# procd init para tunnelkit en OpenWrt, con auto-descarga del binario para
+# routers de flash minuscula (binario en /tmp/RAM, se rebaja en cada arranque
+# desde option binary_url). respawn = procd lo revive si muere.
 USE_PROCD=1
 START=95
 STOP=10
 
 start_service() {
 	config_load tunnelkit
-	local host port user key forwards saint sacnt statsfwd stfwd impl sshcmd
+	local host port user key forwards saint sacnt statsfwd stfwd impl sshcmd bin binurl
 	config_get host     main host
 	config_get port     main ssh_port 2222
 	config_get user     main username tunnel
@@ -16,21 +18,25 @@ start_service() {
 	config_get sacnt    main server_alive_count_max 3
 	config_get statsfwd main stats_forward_port 0
 	config_get stfwd    main speedtest_forward_port 0
-	# ssh_impl: 'dropbear' (default, ships in the OpenWrt base) or 'openssh'
-	# (requires the openssh-client package; larger channel window -> much better
-	# throughput through the tunnel on high-latency links). ssh_command: the binary
-	# to use; defaults to dbclient/ssh depending on the impl.
 	config_get impl     main ssh_impl dropbear
 	if [ "$impl" = "openssh" ]; then
 		config_get sshcmd main ssh_command ssh
 	else
 		config_get sshcmd main ssh_command dbclient
 	fi
+	config_get bin      main binary /usr/bin/tunnelkit-client
+	config_get binurl   main binary_url
 
 	[ -z "$host" ] && { echo "tunnelkit: missing 'host' in /etc/config/tunnelkit"; return 1; }
 
+	# Tiny-flash routers keep the binary in /tmp (RAM): fetch it if absent.
+	if [ ! -x "$bin" ] && [ -n "$binurl" ]; then
+		uclient-fetch -q -O "$bin" "$binurl" 2>/dev/null && chmod +x "$bin"
+	fi
+	[ -x "$bin" ] || { echo "tunnelkit: binary $bin not available"; return 1; }
+
 	procd_open_instance
-	procd_set_param command /usr/bin/tunnelkit-client \
+	procd_set_param command "$bin" \
 		--host "$host" --ssh-port "$port" --user "$user" --key "$key" \
 		--forwards "$forwards" --alive-interval "$saint" \
 		--alive-count "$sacnt" --stats-forward "$statsfwd" \

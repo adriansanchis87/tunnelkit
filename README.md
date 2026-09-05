@@ -227,6 +227,18 @@ opkg install tunnelkit_0.1.0-1_<arch>.ipk
 - `option ssh_impl 'openssh'` — much better throughput on high-latency links,
   but needs the `openssh-client` package and an OpenSSH-format private key.
 
+**Tiny-flash routers** that cannot store the ~6 MB binary in flash can run it
+from `/tmp` (RAM) and re-download it on every boot. Keep the key in flash
+(`/etc/tunnelkit/id_*`, it persists) and set:
+
+```
+option binary '/tmp/tunnelkit-client'
+option binary_url 'https://github.com/OWNER/tunnelkit/releases/download/vX.Y.Z/tunnelkit-client-<arch>'
+```
+
+The service fetches the binary with `uclient-fetch` on start if it is missing.
+Prebuilt static binaries per architecture are attached to each GitHub release.
+
 ### Home Assistant add-on
 
 In Home Assistant go to Settings → Add-ons → Store → ⋮ → Repositories and paste
