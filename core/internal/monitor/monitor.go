@@ -8,12 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -274,77 +270,5 @@ func Serve(addr string, reg *Registry, store *TrafficStore) error {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = io.WriteString(w, page)
 	})
-
-	// Root handler: if the request's host is a client's subdomain
-	// (e.g. tk-caseta-ha.<domain>), reverse-proxy to that client's main
-	// forwarded service (at the ROOT path, so apps like Home Assistant/LuCI
-	// work). Otherwise serve the dashboard/API.
-	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host := r.Host
-		if h, _, err := net.SplitHostPort(host); err == nil {
-			host = h
-		}
-		label := host
-		if i := strings.IndexByte(host, '.'); i >= 0 {
-			label = host[:i]
-		}
-		for _, c := range reg.list() {
-			if subFor(c.Name) == label {
-				port := mainPort(c)
-				if port == 0 {
-					http.Error(w, "client has no forwarded service", http.StatusBadGateway)
-					return
-				}
-				target := &url.URL{Scheme: "http", Host: fmt.Sprintf("127.0.0.1:%d", port)}
-				(&httputil.ReverseProxy{
-					// Rewrite (not Director) so no X-Forwarded-* is added and the
-					// backend sees a plain localhost request (HA won't reject it).
-					Rewrite: func(pr *httputil.ProxyRequest) {
-						pr.SetURL(target)
-						pr.Out.Host = target.Host
-					},
-				}).ServeHTTP(w, r)
-				return
-			}
-		}
-		mux.ServeHTTP(w, r)
-	})
-	return http.ListenAndServe(addr, root)
-}
-
-// subFor is the subdomain label used to reach a client's service, e.g.
-// "argos@example.com" -> "tk-argos", "tk-caseta-ha" -> "tk-caseta-ha".
-// The dashboard page builds the same label in JS to link each client.
-func subFor(name string) string {
-	s := strings.ToLower(name)
-	if i := strings.IndexAny(s, "@ "); i >= 0 {
-		s = s[:i]
-	}
-	var b strings.Builder
-	for _, r := range s {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' {
-			b.WriteRune(r)
-		} else {
-			b.WriteRune('-')
-		}
-	}
-	s = strings.Trim(b.String(), "-")
-	if !strings.HasPrefix(s, "tk-") {
-		s = "tk-" + s
-	}
-	return s
-}
-
-// mainPort returns a client's lowest forwarded port (the x40 service: HA/LuCI;
-// the x42/x43 ports are stats and speedtest).
-func mainPort(c *Client) uint32 {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	var m uint32
-	for _, p := range c.ports {
-		if m == 0 || p < m {
-			m = p
-		}
-	}
-	return m
+	return http.ListenAndServe(addr, mux)
 }

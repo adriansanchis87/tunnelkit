@@ -29,7 +29,6 @@ const page = `<!doctype html>
     background:var(--card);color:var(--accent);cursor:pointer}button:hover{border-color:var(--accent)}
   button:disabled{opacity:.5;cursor:wait}
   .link{border:none;background:none;padding:0;text-decoration:underline;text-underline-offset:2px}
-  a.svc{color:var(--accent);font-weight:700;text-decoration:none}a.svc:hover{text-decoration:underline}
   svg{display:block}.spark{display:flex;align-items:center;gap:.5rem}
   dialog{border:1px solid var(--border);border-radius:10px;background:var(--card);color:var(--fg);
     padding:1.2rem;max-width:90vw;box-shadow:0 8px 30px rgba(0,0,0,.3)}
@@ -52,8 +51,6 @@ function fmtR(n){if(!n)return '0';const u=['','K','M','G'];let i=0;n*=8;
   while(n>=1000&&i<3){n/=1000;i++;}return n.toFixed(i?1:0)+u[i]+'bps';}
 function fmtB(n){if(!n)return '0 B';const u=['B','KB','MB','GB','TB'];let i=0;
   while(n>=1024&&i<4){n/=1024;i++;}return n.toFixed(i?1:0)+' '+u[i];}
-function subFor(n){var s=(n||'').toLowerCase().split(/[@ ]/)[0].replace(/[^a-z0-9-]/g,'-').replace(/^-+|-+$/g,'');if(s.indexOf('tk-')!==0)s='tk-'+s;return s;}
-function svcUrl(n){var p=location.host.split('.');if(p.length<2)return '';return location.protocol+'//'+subFor(n)+'.'+p.slice(1).join('.');}
 function spark(vals,w,h,color){
   if(!vals||!vals.length)return '<svg width="'+w+'" height="'+h+'"></svg>';
   const max=Math.max(1,...vals);const dx=w/Math.max(1,vals.length-1);
@@ -93,9 +90,7 @@ async function tick(){try{
     if(c.speedtest){sp='<div class="spark"><button onclick="speed(\''+c.name+'\',this)">Measure</button>'+
       '<span class="res mono muted">'+(c.last_down?c.last_down.toFixed(1)+'↓ '+c.last_up.toFixed(1)+'↑':'')+'</span>'+
       spark(c.speed_hist,50,20,'var(--accent)')+'</div>';}
-    const _u=svcUrl(c.name);
-    const nm=_u?'<a class="svc" href="'+_u+'" target="_blank" rel="noopener" title="open main web">'+c.name+'</a>':'<b>'+c.name+'</b>';
-    return '<tr><td>'+nm+'<br><span class="mono muted" style="font-size:.75rem">'+(c.ports||[]).join(' ')+'</span></td>'+
+    return '<tr><td><b>'+c.name+'</b><br><span class="mono muted" style="font-size:.75rem">'+(c.ports||[]).join(' ')+'</span></td>'+
       '<td><span class="badge up"><span class="dot"></span>ON</span></td><td class="mono">'+(c.ip||'-')+'</td>'+
       '<td class="mono">'+fmtU(c.uptime_seconds)+'</td><td class="mono">'+(c.active||0)+'</td>'+
       '<td>'+rc+'</td><td class="mono muted">'+(c.latency_ms?c.latency_ms.toFixed(0)+' ms':'-')+'</td>'+
