@@ -8,8 +8,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -270,5 +274,87 @@ func Serve(addr string, reg *Registry, store *TrafficStore) error {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = io.WriteString(w, page)
 	})
-	return http.ListenAndServe(addr, mux)
+
+	// Root handler: if the request host is a client's subdomain
+	// (tkha<site> / tkrouter<site>), reverse-proxy to that client's main
+	// forwarded service at the ROOT path (so Home Assistant / LuCI work).
+	// Otherwise serve the dashboard/API.
+	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		label := host
+		if i := strings.IndexByte(host, '.'); i >= 0 {
+			label = host[:i]
+		}
+		if label != "" {
+			for _, c := range reg.list() {
+				if hostFor(c.Name) == label {
+					port := mainPort(c)
+					if port == 0 {
+						http.Error(w, "client has no forwarded service", http.StatusBadGateway)
+						return
+					}
+					target := &url.URL{Scheme: "http", Host: fmt.Sprintf("127.0.0.1:%d", port)}
+					(&httputil.ReverseProxy{
+						// Rewrite (not Director): no X-Forwarded-* added and Host set
+						// to localhost, so the backend accepts it as a direct request.
+						Rewrite: func(pr *httputil.ProxyRequest) {
+							pr.SetURL(target)
+							pr.Out.Host = target.Host
+						},
+					}).ServeHTTP(w, r)
+					return
+				}
+			}
+		}
+		mux.ServeHTTP(w, r)
+	})
+	return http.ListenAndServe(addr, root)
+}
+
+// hostFor is the subdomain label for a client's main service:
+// "tk-caseta-ha" -> "tkhacaseta", "tk-caseta-router" -> "tkroutercaseta".
+// Returns "" for clients without a site-role name (e.g. argos), which get no
+// URL. The dashboard builds the same label in JS to link each client.
+func hostFor(name string) string {
+	if !strings.HasPrefix(name, "tk-") {
+		return ""
+	}
+	rest := strings.TrimPrefix(name, "tk-") // "caseta-ha"
+	i := strings.LastIndex(rest, "-")
+	if i < 0 {
+		return ""
+	}
+	site := onlyAlnum(rest[:i])
+	role := onlyAlnum(rest[i+1:])
+	if site == "" || role == "" {
+		return ""
+	}
+	return "tk" + role + site
+}
+
+func onlyAlnum(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// mainPort returns a client's lowest forwarded port (the x40 service: HA/LuCI;
+// x42/x43 are stats and speedtest).
+func mainPort(c *Client) uint32 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var m uint32
+	for _, p := range c.ports {
+		if m == 0 || p < m {
+			m = p
+		}
+	}
+	return m
 }
