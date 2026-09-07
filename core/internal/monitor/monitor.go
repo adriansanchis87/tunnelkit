@@ -29,6 +29,7 @@ type sample struct {
 	RxRate  float64 `json:"rx"` // bytes/s
 	Active  int64   `json:"active"`
 	Latency float64 `json:"lat"` // ms
+	Rec     int     `json:"rec"` // cumulative reconnects at this sample (for the drop graph)
 }
 
 // Client is a connected client. The traffic/connection counters are incremented
@@ -157,7 +158,7 @@ func (c *Client) scrape() {
 		}
 	}
 	c.prevTx, c.prevRx, c.prevAt = tx, rx, now
-	c.hist = append(c.hist, sample{now.Unix(), txr, rxr, c.active.Load(), lat})
+	c.hist = append(c.hist, sample{now.Unix(), txr, rxr, c.active.Load(), lat, c.reconnects})
 	if len(c.hist) > histLen {
 		c.hist = c.hist[len(c.hist)-histLen:]
 	}

@@ -23,6 +23,8 @@ const page = `<!doctype html>
   .badge{display:inline-flex;align-items:center;gap:.4rem;padding:.15rem .6rem;border-radius:999px;font-size:.8rem;font-weight:600}
   .up{color:var(--up);background:var(--up-bg)}
   .down{color:var(--muted);background:var(--border)}
+  button.badge{border:none;font:inherit;cursor:pointer}
+  button.link.hi{background:none;text-decoration:underline}
   tr.offline td{color:var(--muted);opacity:.75}
   .dot{width:.5rem;height:.5rem;border-radius:50%;background:currentColor}
   .mono{font-variant-numeric:tabular-nums}.muted{color:var(--muted)}
@@ -78,10 +80,47 @@ async function openTraffic(name){
     if(!(d.days||[]).length)h+='<tr><td colspan=2 class=muted>no data</td></tr>';
     h+='</table>';c.innerHTML=h;
   }catch(e){c.innerHTML='error: '+e;}}
+var LAST={};
+function recBars(pts,w,h){
+  if(!pts.length)return '<svg width="'+w+'" height="'+h+'"></svg>';
+  const max=Math.max(1,...pts.map(p=>p.d));const bw=w/pts.length;let s='';
+  pts.forEach((p,i)=>{const bh=p.d>0?Math.max(2,(p.d/max)*(h-16)):0;
+    s+='<rect x="'+(i*bw).toFixed(1)+'" y="'+(h-14-bh).toFixed(1)+'" width="'+Math.max(1,bw-1).toFixed(1)+'" height="'+bh.toFixed(1)+'" fill="'+(p.d>0?'var(--warn)':'transparent')+'"/>';});
+  s+='<line x1="0" y1="'+(h-14)+'" x2="'+w+'" y2="'+(h-14)+'" stroke="var(--border)"/>';
+  return '<svg width="'+w+'" height="'+h+'" style="max-width:100%">'+s+'</svg>';}
+function openRec(name){
+  const c=LAST[name];if(!c)return;
+  const dlg=document.getElementById('dlg'),el=document.getElementById('dlgc');
+  const h=c.hist||[];const pts=[];let win=0,lastTs=0;
+  for(let i=1;i<h.length;i++){let d=(h[i].rec||0)-(h[i-1].rec||0);if(d<0)d=0;pts.push({t:h[i].ts,d:d});if(d>0){win+=d;lastTs=h[i].ts;}}
+  const spanS=h.length>1?(h[h.length-1].ts-h[0].ts):0;
+  const perHour=spanS>0?(win*3600/spanS):0;
+  let html='<h3>'+name+' — reconexiones</h3>';
+  html+='<div class="mono" style="margin:.3rem 0 .6rem">total histórico: <b>'+(c.reconnects||0)+'</b> · en ventana ('+fmtU(spanS)+'): <b>'+win+'</b> · ~'+perHour.toFixed(1)+'/h'+(lastTs?' · última caída: '+new Date(lastTs*1000).toLocaleTimeString():' · sin caídas en la ventana')+'</div>';
+  html+=recBars(pts,520,90);
+  html+='<div class="muted" style="font-size:.75rem;margin-top:.3rem">cada barra = reconexiones en ese intervalo (~5s); ventana ~10 min</div>';
+  el.innerHTML=html;dlg.showModal();}
+function openLinks(name){
+  const dlg=document.getElementById('dlg'),el=document.getElementById('dlgc');
+  const n=(name||'').toLowerCase();let html='<h3>'+name+' — enlaces del túnel</h3>';const rows=[];
+  if(n.indexOf('tk-')===0){
+    const r=n.slice(3),i=r.lastIndexOf('-');
+    const site=r.slice(0,i).replace(/[^a-z0-9]/g,''),role=r.slice(i+1).replace(/[^a-z0-9]/g,'');
+    const dom=location.host.split('.').slice(1).join('.');const U=x=>location.protocol+'//'+x+'.'+dom;
+    if(role==='ha'){rows.push(['principal','HA',U('ha'+site)]);
+      if(LAST['tk-'+site+'-router'])rows.push(['emergencia','router vía esta HA',U('ha'+site+'-router-b')]);}
+    else if(role==='router'){rows.push(['principal','router (LuCI)',U('ha'+site+'-router')]);
+      if(LAST['tk-'+site+'-ha'])rows.push(['emergencia','HA vía este router',U('ha'+site+'-b')]);}}
+  if(!rows.length)html+='<div class="muted">sin enlaces web</div>';
+  else{html+='<table><tr><th></th><th>destino</th><th>enlace</th></tr>';
+    rows.forEach(x=>{html+='<tr><td>'+x[0]+'</td><td class="mono">'+x[1]+'</td><td><a class="svc" href="'+x[2]+'" target="_blank" rel="noopener">'+x[2].replace(/^https?:\/\//,'')+'</a></td></tr>';});
+    html+='</table>';}
+  el.innerHTML=html;dlg.showModal();}
 async function tick(){try{
   const d=await (await fetch('/api/status',{cache:'no-store'})).json();
   document.getElementById('gen').textContent=d.generated_at?'updated '+new Date(d.generated_at*1000).toLocaleTimeString():'';
   const cs=d.clients||[];
+  LAST={};cs.forEach(c=>LAST[c.name]=c);
   const on=cs.filter(c=>c.connected!==false);
   const off=cs.filter(c=>c.connected===false).sort((a,b)=>(b.offline_seconds||0)-(a.offline_seconds||0));
   document.getElementById('sum').innerHTML='<span class="pill">'+on.length+' connected</span>'+
@@ -97,7 +136,7 @@ async function tick(){try{
       '<td class="mono">'+fmtB(c.traffic_today||0)+'</td><td class="mono">-</td></tr>';
   }).join('');
   document.getElementById('rows').innerHTML=(on.map(c=>{
-    const rc=(c.reconnects||0)>=5?'<span class="hi">'+c.reconnects+' ⚠</span>':'<span class="mono">'+(c.reconnects||0)+'</span>';
+    const rc='<button class="link mono'+((c.reconnects||0)>=5?' hi':'')+'" onclick="openRec(\''+c.name+'\')" title="ver caídas en el tiempo">'+(c.reconnects||0)+((c.reconnects||0)>=5?' ⚠':'')+'</button>';
     const h=c.hist||[];const rx=h.map(s=>s.rx),tx=h.map(s=>s.tx);
     const traf='<div class="spark"><div>'+spark(rx,60,20,'var(--rx)')+spark(tx,60,10,'var(--tx)')+'</div>'+
       '<button class="link mono" onclick="openTraffic(\''+c.name+'\')" title="view by port/day">'+fmtB(c.traffic_today)+'</button></div>';
@@ -108,7 +147,7 @@ async function tick(){try{
     const _u=svcUrl(c.name);
     const nm=_u?'<a class="svc" href="'+_u+'" target="_blank" rel="noopener" title="open main web">'+c.name+'</a>':'<b>'+c.name+'</b>';
     return '<tr><td>'+nm+'<br><span class="mono muted" style="font-size:.75rem">'+(c.ports||[]).join(' ')+'</span></td>'+
-      '<td><span class="badge up"><span class="dot"></span>ON</span></td><td class="mono">'+(c.ip||'-')+'</td>'+
+      '<td><button class="badge up linkbadge" onclick="openLinks(\''+c.name+'\')" title="enlaces del túnel (principal + emergencia)"><span class="dot"></span>ON</button></td><td class="mono">'+(c.ip||'-')+'</td>'+
       '<td class="mono">'+fmtU(c.uptime_seconds)+'</td><td class="mono">'+(c.active||0)+'</td>'+
       '<td>'+rc+'</td><td class="mono muted">'+(c.latency_ms?c.latency_ms.toFixed(0)+' ms':'-')+'</td>'+
       '<td>'+traf+'</td><td>'+sp+'</td></tr>';
