@@ -22,6 +22,8 @@ const page = `<!doctype html>
   th{color:var(--muted);font-weight:600}tr:last-child td{border-bottom:none}
   .badge{display:inline-flex;align-items:center;gap:.4rem;padding:.15rem .6rem;border-radius:999px;font-size:.8rem;font-weight:600}
   .up{color:var(--up);background:var(--up-bg)}
+  .down{color:var(--muted);background:var(--border)}
+  tr.offline td{color:var(--muted);opacity:.75}
   .dot{width:.5rem;height:.5rem;border-radius:50%;background:currentColor}
   .mono{font-variant-numeric:tabular-nums}.muted{color:var(--muted)}
   .hi{color:var(--warn);background:var(--warn-bg);padding:.1rem .5rem;border-radius:999px;font-weight:600}
@@ -80,11 +82,21 @@ async function tick(){try{
   const d=await (await fetch('/api/status',{cache:'no-store'})).json();
   document.getElementById('gen').textContent=d.generated_at?'updated '+new Date(d.generated_at*1000).toLocaleTimeString():'';
   const cs=d.clients||[];
-  document.getElementById('sum').innerHTML='<span class="pill">'+cs.length+' connected</span>'+
-    '<span class="pill">'+cs.reduce((a,c)=>a+(c.active||0),0)+' active connections</span>'+
+  const on=cs.filter(c=>c.connected!==false);
+  const off=cs.filter(c=>c.connected===false).sort((a,b)=>(b.offline_seconds||0)-(a.offline_seconds||0));
+  document.getElementById('sum').innerHTML='<span class="pill">'+on.length+' connected</span>'+
+    (off.length?'<span class="pill">'+off.length+' offline</span>':'')+
+    '<span class="pill">'+on.reduce((a,c)=>a+(c.active||0),0)+' active connections</span>'+
     '<span class="pill">'+fmtB(cs.reduce((a,c)=>a+(c.traffic_today||0),0))+' today</span>'+
-    '<span class="pill">'+cs.reduce((a,c)=>a+(c.reconnects||0),0)+' reconnections</span>';
-  document.getElementById('rows').innerHTML=cs.map(c=>{
+    '<span class="pill">'+on.reduce((a,c)=>a+(c.reconnects||0),0)+' reconnections</span>';
+  const offHtml=off.map(c=>{
+    return '<tr class="offline"><td><b>'+c.name+'</b></td>'+
+      '<td><span class="badge down"><span class="dot"></span>OFF</span></td><td class="mono">-</td>'+
+      '<td class="mono" title="time disconnected">offline '+fmtU(c.offline_seconds)+'</td><td class="mono">-</td>'+
+      '<td class="mono">-</td><td class="mono">-</td>'+
+      '<td class="mono">'+fmtB(c.traffic_today||0)+'</td><td class="mono">-</td></tr>';
+  }).join('');
+  document.getElementById('rows').innerHTML=(on.map(c=>{
     const rc=(c.reconnects||0)>=5?'<span class="hi">'+c.reconnects+' ⚠</span>':'<span class="mono">'+(c.reconnects||0)+'</span>';
     const h=c.hist||[];const rx=h.map(s=>s.rx),tx=h.map(s=>s.tx);
     const traf='<div class="spark"><div>'+spark(rx,60,20,'var(--rx)')+spark(tx,60,10,'var(--tx)')+'</div>'+
@@ -100,7 +112,7 @@ async function tick(){try{
       '<td class="mono">'+fmtU(c.uptime_seconds)+'</td><td class="mono">'+(c.active||0)+'</td>'+
       '<td>'+rc+'</td><td class="mono muted">'+(c.latency_ms?c.latency_ms.toFixed(0)+' ms':'-')+'</td>'+
       '<td>'+traf+'</td><td>'+sp+'</td></tr>';
-  }).join('')||'<tr><td colspan="9" class="muted">no clients connected</td></tr>';
+  }).join('')+offHtml)||'<tr><td colspan="9" class="muted">no clients</td></tr>';
 }catch(e){document.getElementById('sum').innerHTML='<span class="pill">'+e+'</span>';}}
 tick();setInterval(tick,5000);
 </script></body></html>`

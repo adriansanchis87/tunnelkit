@@ -16,8 +16,9 @@ type pb struct {
 
 // ct: a client's traffic, by port and by day. Persistable.
 type ct struct {
-	Ports map[uint32]*pb    `json:"ports"`
-	Days  map[string]uint64 `json:"days"` // "2006-01-02" -> bytes (tx+rx)
+	Ports    map[uint32]*pb    `json:"ports"`
+	Days     map[string]uint64 `json:"days"`      // "2006-01-02" -> bytes (tx+rx)
+	LastSeen int64             `json:"last_seen"` // unix: last time the client was connected
 }
 
 // TrafficStore accumulates traffic by client NAME (survives reconnections and
@@ -37,8 +38,45 @@ func NewTrafficStore(path string) *TrafficStore {
 	if data, err := os.ReadFile(path); err == nil {
 		_ = json.Unmarshal(data, &t.m)
 	}
+	// Seed LastSeen for entries loaded from an older state file (field absent).
+	// We don't know their real last-seen time, so we baseline it to now; going
+	// forward Touch() keeps it accurate.
+	now := time.Now().Unix()
+	for _, c := range t.m {
+		if c.LastSeen == 0 {
+			c.LastSeen = now
+		}
+	}
 	go t.saver()
 	return t
+}
+
+// Touch records that a client is currently connected (updates LastSeen to now).
+// Creates the client entry if it is not known yet.
+func (t *TrafficStore) Touch(name string) {
+	if name == "" {
+		return
+	}
+	t.mu.Lock()
+	c := t.m[name]
+	if c == nil {
+		c = &ct{Ports: map[uint32]*pb{}, Days: map[string]uint64{}}
+		t.m[name] = c
+	}
+	c.LastSeen = time.Now().Unix()
+	t.dirty = true
+	t.mu.Unlock()
+}
+
+// Seen returns a snapshot of every known client's last-seen unix time.
+func (t *TrafficStore) Seen() map[string]int64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make(map[string]int64, len(t.m))
+	for name, c := range t.m {
+		out[name] = c.LastSeen
+	}
+	return out
 }
 
 func (t *TrafficStore) Add(name string, port uint32, tx, rx uint64) {

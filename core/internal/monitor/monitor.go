@@ -184,6 +184,10 @@ type row struct {
 	LastUp       float64   `json:"last_up"`
 	SpeedHist    []float64 `json:"speed_hist"`
 	TrafficToday uint64    `json:"traffic_today"` // today's bytes (tx+rx)
+	// OfflineSeconds is how long a KNOWN client has been disconnected. It is
+	// only set on rows where Connected is false (built from the traffic store's
+	// last-seen record); 0 on connected clients.
+	OfflineSeconds float64 `json:"offline_seconds"`
 }
 
 func (c *Client) row() row {
@@ -210,18 +214,49 @@ func Serve(addr string, reg *Registry, store *TrafficStore) error {
 	go func() {
 		for range time.Tick(5 * time.Second) {
 			reg.sample()
+			// Record every currently-connected client as "seen now" so that,
+			// once it drops, we can report exactly how long it has been offline.
+			if store != nil {
+				for _, c := range reg.list() {
+					if c.row().Connected {
+						store.Touch(c.Name)
+					}
+				}
+			}
 		}
 	}()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, _ *http.Request) {
 		var rows []row
+		connected := map[string]bool{}
 		for _, c := range reg.list() {
 			r := c.row()
 			if store != nil {
 				r.TrafficToday = store.todayTotal(c.Name)
 			}
 			rows = append(rows, r)
+			connected[c.Name] = true
+		}
+		// Append known-but-currently-disconnected clients so the panel can show
+		// them as offline together with how long they have been down.
+		if store != nil {
+			now := time.Now().Unix()
+			for name, lastSeen := range store.Seen() {
+				if connected[name] {
+					continue
+				}
+				off := float64(now - lastSeen)
+				if off < 0 {
+					off = 0
+				}
+				rows = append(rows, row{
+					Name:           name,
+					Connected:      false,
+					TrafficToday:   store.todayTotal(name),
+					OfflineSeconds: off,
+				})
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
