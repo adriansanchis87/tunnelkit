@@ -253,6 +253,26 @@ The server is the speedtest **initiator** and measures on demand against each
 client's forwarded port. The web monitor reads the clients' `/metrics` and can
 run these speedtests on demand.
 
+### Stale-session handling (dirty client drops)
+
+When a client drops in the dirty way a mobile/satellite link does (no clean TCP
+close), its forwarded listeners would otherwise stay bound for minutes, so the
+reconnecting client's `-R` would keep failing until the old socket finally died
+(seen as a reconnect loop on OpenSSH clients, or `ports: null` on dropbear ones).
+The server guards against this without a restart:
+
+- **Server → client keepalive** (`KeepaliveInterval`, default 20s): probes each
+  session with `keepalive@openssh.com`; a failed probe closes the session and
+  frees its ports. This is the equivalent of OpenSSH sshd's `ClientAliveInterval`.
+- **Evict-on-reconnect** (`EvictWait`, default 5s): a new connection for the same
+  client name closes the previous session and waits for it to release its
+  listeners, so the reconnect reclaims its ports immediately — even before the
+  stale TCP has died. (OpenSSH sshd does not do this.)
+- TCP keepalive on accepted connections and a handshake deadline as backstops.
+
+Covered by `internal/tunnelserver/server_test.go` (eviction, no listener leak on
+clean disconnect, keepalive is sent, permitlisten still enforced).
+
 ## Status
 
 Builds and cross-compiles (amd64, arm64, armv7, mips) and works: tunnel,

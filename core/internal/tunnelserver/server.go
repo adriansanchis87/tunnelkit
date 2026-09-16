@@ -25,6 +25,28 @@ import (
 	"github.com/adriansanchis87/tunnelkit/internal/monitor"
 )
 
+// Tunables (package vars so tests can shorten them).
+//
+// KeepaliveInterval: the server probes each connected client with
+// keepalive@openssh.com; if a probe fails, the session is closed and its
+// forwarded listeners are freed. This is the equivalent of OpenSSH sshd's
+// ClientAliveInterval and is what detects a client that dropped in the dirty
+// way a mobile/satellite link does (the TCP socket would otherwise linger for
+// minutes, keeping the port bound and blocking the client's reconnect).
+//
+// EvictWait: when a client reconnects, the server closes its previous (stale)
+// session and waits up to this long for that session to release its listeners,
+// so the reconnecting client reclaims its ports immediately instead of failing
+// the forward until the old TCP finally dies.
+//
+// HandshakeTimeout: a deadline for the SSH handshake so scanners / half-open
+// connections cannot pile up.
+var (
+	KeepaliveInterval = 20 * time.Second
+	EvictWait         = 5 * time.Second
+	HandshakeTimeout  = 15 * time.Second
+)
+
 // Run starts the SSH tunnel server (blocking).
 func Run(cfg *config.Config) error {
 	hostKey, err := loadOrCreateHostKey(cfg.ServerHostKey)
@@ -67,12 +89,18 @@ func Run(cfg *config.Config) error {
 		return err
 	}
 	log.Printf("tunnelserver: listening for SSH on %s", cfg.ServerSSHAddr)
+	mgr := newSessionManager()
 	for {
 		c, err := ln.Accept()
 		if err != nil {
 			return err
 		}
-		go handleConn(c, sconf, reg, store)
+		// TCP keepalive as a backstop under the SSH keepalive.
+		if tc, ok := c.(*net.TCPConn); ok {
+			_ = tc.SetKeepAlive(true)
+			_ = tc.SetKeepAlivePeriod(30 * time.Second)
+		}
+		go handleConn(c, sconf, reg, mgr, store)
 	}
 }
 
@@ -85,13 +113,17 @@ type session struct {
 	store   *monitor.TrafficStore
 	id      string
 	name    string
+	done    chan struct{} // closed once the session's listeners are released
 }
 
-func handleConn(c net.Conn, sconf *ssh.ServerConfig, reg *monitor.Registry, store *monitor.TrafficStore) {
+func handleConn(c net.Conn, sconf *ssh.ServerConfig, reg *monitor.Registry, mgr *sessionManager, store *monitor.TrafficStore) {
+	// Bound the handshake so scanners / half-open connections don't accumulate.
+	_ = c.SetReadDeadline(time.Now().Add(HandshakeTimeout))
 	sconn, chans, reqs, err := ssh.NewServerConn(c, sconf)
 	if err != nil {
 		return // handshake/auth failure (includes scans)
 	}
+	_ = c.SetReadDeadline(time.Time{}) // clear: tunnels are long-lived
 	defer sconn.Close()
 	s := &session{
 		sconn:   sconn,
@@ -101,6 +133,7 @@ func handleConn(c net.Conn, sconf *ssh.ServerConfig, reg *monitor.Registry, stor
 		store:   store,
 		id:      sconn.RemoteAddr().String(),
 		name:    sconn.Permissions.Extensions["name"],
+		done:    make(chan struct{}),
 	}
 	name := s.name
 	ip, _, _ := net.SplitHostPort(sconn.RemoteAddr().String())
@@ -108,6 +141,14 @@ func handleConn(c net.Conn, sconf *ssh.ServerConfig, reg *monitor.Registry, stor
 	defer reg.Del(s.id)
 	log.Printf("tunnelserver: client %s (%s) authenticated (ports %v)",
 		name, sconn.RemoteAddr(), keys(s.allowed))
+
+	// Evict any previous (stale) session of the same client and wait for it to
+	// release its listeners, so this reconnect reclaims its ports at once.
+	mgr.register(s)
+	defer mgr.unregister(s)
+
+	// Server -> client keepalive: frees the listeners fast when the link dies.
+	go s.keepalive()
 
 	// Tunnels only: we reject sessions/shells.
 	go func() {
@@ -129,6 +170,25 @@ func handleConn(c net.Conn, sconf *ssh.ServerConfig, reg *monitor.Registry, stor
 		}
 	}
 	s.closeAll()
+	close(s.done)
+}
+
+// keepalive probes the client until the session ends; a failed probe closes the
+// connection, which ends the request loop and frees the listeners.
+func (s *session) keepalive() {
+	t := time.NewTicker(KeepaliveInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-t.C:
+			if _, _, err := s.sconn.SendRequest("keepalive@openssh.com", true, nil); err != nil {
+				s.sconn.Close()
+				return
+			}
+		}
+	}
 }
 
 // startForward handles a client's "-R <port>": it opens the listener and
@@ -144,8 +204,11 @@ func (s *session) startForward(req *ssh.Request) {
 		}
 		return
 	}
-	ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", p.Port))
+	ln, err := listenReuse(p.Port)
 	if err != nil {
+		// Should not happen after eviction, but log it so a stuck port is visible
+		// on the panel (the client's forward stays down until it reconnects).
+		log.Printf("tunnelserver: %s cannot bind port %d: %v", s.name, p.Port, err)
 		if req.WantReply {
 			req.Reply(false, nil)
 		}
@@ -257,6 +320,58 @@ func (s *session) closeAll() {
 	for _, ln := range s.fwds {
 		ln.Close()
 	}
+	s.fwds = map[uint32]net.Listener{}
+}
+
+// --- session manager: one live session per client name ---
+//
+// The monitor Registry is keyed by remote address, so a stale session and a
+// reconnecting one coexist there. The manager is keyed by NAME so that a new
+// connection can evict the previous one and take over its ports.
+type sessionManager struct {
+	mu     sync.Mutex
+	byName map[string]*session
+}
+
+func newSessionManager() *sessionManager {
+	return &sessionManager{byName: map[string]*session{}}
+}
+
+func (m *sessionManager) register(s *session) {
+	if s.name == "" {
+		return
+	}
+	m.mu.Lock()
+	old := m.byName[s.name]
+	m.byName[s.name] = s
+	m.mu.Unlock()
+	if old == nil || old == s {
+		return
+	}
+	log.Printf("tunnelserver: %s reconnected, evicting stale session %s", s.name, old.id)
+	old.sconn.Close() // ends its request loop -> closeAll frees the listeners
+	select {
+	case <-old.done:
+	case <-time.After(EvictWait):
+		log.Printf("tunnelserver: stale session %s did not release ports within %s", old.id, EvictWait)
+	}
+}
+
+func (m *sessionManager) unregister(s *session) {
+	if s.name == "" {
+		return
+	}
+	m.mu.Lock()
+	if m.byName[s.name] == s {
+		delete(m.byName, s.name)
+	}
+	m.mu.Unlock()
+}
+
+// listenReuse binds a forwarded port with SO_REUSEADDR (Go sets it by default),
+// on all interfaces, matching the previous behaviour.
+func listenReuse(port uint32) (net.Listener, error) {
+	return net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
 }
 
 // --- auth / host key ---
