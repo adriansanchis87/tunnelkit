@@ -14,11 +14,21 @@ type pb struct {
 	Rx uint64 `json:"rx"`
 }
 
+// upEvent is an availability transition: at unix time T the client's connected
+// state BECAME U. The state during [events[i].T, events[i+1].T) is events[i].U.
+// A compact log (only transitions) so uptime over any window is reconstructable
+// and it survives restarts (persisted with the traffic store).
+type upEvent struct {
+	T int64 `json:"t"`
+	U bool  `json:"u"`
+}
+
 // ct: a client's traffic, by port and by day. Persistable.
 type ct struct {
 	Ports    map[uint32]*pb    `json:"ports"`
 	Days     map[string]uint64 `json:"days"`      // "2006-01-02" -> bytes (tx+rx)
 	LastSeen int64             `json:"last_seen"` // unix: last time the client was connected
+	Up       []upEvent         `json:"up,omitempty"`
 }
 
 // TrafficStore accumulates traffic by client NAME (survives reconnections and
@@ -66,6 +76,83 @@ func (t *TrafficStore) Touch(name string) {
 	c.LastSeen = time.Now().Unix()
 	t.dirty = true
 	t.mu.Unlock()
+}
+
+// RecordState appends an availability transition for a client, but only when the
+// state actually changes (the log stays compact). Creates the entry if unknown.
+func (t *TrafficStore) RecordState(name string, up bool) {
+	if name == "" {
+		return
+	}
+	t.mu.Lock()
+	c := t.m[name]
+	if c == nil {
+		c = &ct{Ports: map[uint32]*pb{}, Days: map[string]uint64{}}
+		t.m[name] = c
+	}
+	if n := len(c.Up); n == 0 || c.Up[n-1].U != up {
+		c.Up = append(c.Up, upEvent{T: time.Now().Unix(), U: up})
+		t.dirty = true
+	}
+	t.mu.Unlock()
+}
+
+// uptimeSeries returns a copy of a client's availability transition log.
+func (t *TrafficStore) uptimeSeries(name string) []upEvent {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	c := t.m[name]
+	if c == nil {
+		return nil
+	}
+	return append([]upEvent(nil), c.Up...)
+}
+
+// uptimePct returns the % of the last windowSec seconds the client was connected,
+// over the portion for which we have data. Returns -1 when there is no data.
+func (t *TrafficStore) uptimePct(name string, windowSec int64) float64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	c := t.m[name]
+	if c == nil || len(c.Up) == 0 {
+		return -1
+	}
+	ev := c.Up
+	now := time.Now().Unix()
+	from := now - windowSec
+	if ds := ev[0].T; ds > from { // no data before the first event
+		from = ds
+	}
+	st := ev[0].U
+	for _, e := range ev {
+		if e.T <= from {
+			st = e.U
+		} else {
+			break
+		}
+	}
+	cursor, cur := from, st
+	var upDur int64
+	for _, e := range ev {
+		if e.T <= from {
+			continue
+		}
+		if e.T >= now {
+			break
+		}
+		if cur {
+			upDur += e.T - cursor
+		}
+		cursor, cur = e.T, e.U
+	}
+	if cur {
+		upDur += now - cursor
+	}
+	cov := now - from
+	if cov <= 0 {
+		return -1
+	}
+	return float64(upDur) / float64(cov) * 100
 }
 
 // Seen returns a snapshot of every known client's last-seen unix time.
@@ -151,6 +238,7 @@ func (t *TrafficStore) saver() {
 			continue
 		}
 		// prune old days (>60) to avoid growing without bound
+		cut := time.Now().Add(-31 * 24 * time.Hour).Unix()
 		for _, c := range t.m {
 			if len(c.Days) > 60 {
 				var ds []string
@@ -161,6 +249,24 @@ func (t *TrafficStore) saver() {
 				for _, d := range ds[:len(ds)-60] {
 					delete(c.Days, d)
 				}
+			}
+			// prune availability events older than 31 days, but keep the last one
+			// before the cutoff (it carries the state entering the window); cap total.
+			if len(c.Up) > 1 {
+				keep := 0
+				for i, e := range c.Up {
+					if e.T < cut {
+						keep = i
+					} else {
+						break
+					}
+				}
+				if keep > 0 {
+					c.Up = append([]upEvent(nil), c.Up[keep:]...)
+				}
+			}
+			if len(c.Up) > 8000 {
+				c.Up = c.Up[len(c.Up)-8000:]
 			}
 		}
 		data, _ := json.Marshal(t.m)

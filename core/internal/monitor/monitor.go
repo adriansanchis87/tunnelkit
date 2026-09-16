@@ -189,6 +189,9 @@ type row struct {
 	// only set on rows where Connected is false (built from the traffic store's
 	// last-seen record); 0 on connected clients.
 	OfflineSeconds float64 `json:"offline_seconds"`
+	// Uptime24h is the % of the last 24h the client was connected (from the
+	// availability log); -1 when there is no data.
+	Uptime24h float64 `json:"uptime_24h"`
 }
 
 func (c *Client) row() row {
@@ -212,17 +215,34 @@ func (c *Client) row() row {
 
 // Serve starts the web panel (blocking) + the background sampler.
 func Serve(addr string, reg *Registry, store *TrafficStore) error {
+	startAt := time.Now()
 	go func() {
 		for range time.Tick(5 * time.Second) {
 			reg.sample()
+			if store == nil {
+				continue
+			}
 			// Record every currently-connected client as "seen now" so that,
 			// once it drops, we can report exactly how long it has been offline.
-			if store != nil {
-				for _, c := range reg.list() {
-					if c.row().Connected {
-						store.Touch(c.Name)
-					}
+			connected := map[string]bool{}
+			for _, c := range reg.list() {
+				if c.row().Connected {
+					store.Touch(c.Name)
+					connected[c.Name] = true
 				}
+			}
+			// Availability log: mark each known client up/down (RecordState only
+			// writes on a real change). During the first 30s after a server
+			// (re)start we skip DOWN marks, so a client that reconnects quickly
+			// after a deploy stays continuously up instead of getting a blip that
+			// is really the server's own downtime.
+			grace := time.Since(startAt) < 30*time.Second
+			for name := range store.Seen() {
+				up := connected[name]
+				if !up && grace {
+					continue
+				}
+				store.RecordState(name, up)
 			}
 		}
 	}()
@@ -233,8 +253,10 @@ func Serve(addr string, reg *Registry, store *TrafficStore) error {
 		connected := map[string]bool{}
 		for _, c := range reg.list() {
 			r := c.row()
+			r.Uptime24h = -1
 			if store != nil {
 				r.TrafficToday = store.todayTotal(c.Name)
+				r.Uptime24h = store.uptimePct(c.Name, 86400)
 			}
 			rows = append(rows, r)
 			connected[c.Name] = true
@@ -256,6 +278,7 @@ func Serve(addr string, reg *Registry, store *TrafficStore) error {
 					Connected:      false,
 					TrafficToday:   store.todayTotal(name),
 					OfflineSeconds: off,
+					Uptime24h:      store.uptimePct(name, 86400),
 				})
 			}
 		}
@@ -272,6 +295,18 @@ func Serve(addr string, reg *Registry, store *TrafficStore) error {
 		ports, days := store.breakdown(req.URL.Query().Get("client"))
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"ports": ports, "days": days})
+	})
+	mux.HandleFunc("/api/uptime", func(w http.ResponseWriter, req *http.Request) {
+		if store == nil {
+			http.Error(w, "no store", http.StatusNotFound)
+			return
+		}
+		name := req.URL.Query().Get("client")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"name": name, "now": time.Now().Unix(),
+			"events": store.uptimeSeries(name),
+		})
 	})
 	mux.HandleFunc("/api/speedtest", func(w http.ResponseWriter, req *http.Request) {
 		c := reg.byName(req.URL.Query().Get("client"))
