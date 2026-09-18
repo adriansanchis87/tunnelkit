@@ -56,8 +56,10 @@ function fmtR(n){if(!n)return '0';const u=['','K','M','G'];let i=0;n*=8;
   while(n>=1000&&i<3){n/=1000;i++;}return n.toFixed(i?1:0)+u[i]+'bps';}
 function fmtB(n){if(!n)return '0 B';const u=['B','KB','MB','GB','TB'];let i=0;
   while(n>=1024&&i<4){n/=1024;i++;}return n.toFixed(i?1:0)+' '+u[i];}
-function hostFor(n){if(n.indexOf('tk-')!==0)return '';var r=n.slice(3);var i=r.lastIndexOf('-');if(i<0)return '';var site=r.slice(0,i).replace(/[^a-z0-9]/g,'');var role=r.slice(i+1).replace(/[^a-z0-9]/g,'');if(!site||!role)return '';if(role==='ha')return 'ha'+site;if(role==='router')return 'ha'+site+'-router';return '';}
-function svcUrl(n){var hp=hostFor((n||'').toLowerCase());if(!hp)return '';var p=location.host.split('.');if(p.length<2)return '';return location.protocol+'//'+hp+'.'+p.slice(1).join('.');}
+// Links come from the server (/api/status "links", built from TK_SERVER_LINKS):
+// each is a subdomain label, completed here with the panel's own parent domain.
+function linkUrl(host){var p=location.host.split('.');if(p.length<2||!host)return '';return location.protocol+'//'+host+'.'+p.slice(1).join('.');}
+function mainUrl(c){var l=(c.links||[]).find(x=>x.kind==='main');return l?linkUrl(l.host):'';}
 function spark(vals,w,h,color){
   if(!vals||!vals.length)return '<svg width="'+w+'" height="'+h+'"></svg>';
   const max=Math.max(1,...vals);const dx=w/Math.max(1,vals.length-1);
@@ -95,24 +97,17 @@ function openRec(name){
   for(let i=1;i<h.length;i++){let d=(h[i].rec||0)-(h[i-1].rec||0);if(d<0)d=0;pts.push({t:h[i].ts,d:d});if(d>0){win+=d;lastTs=h[i].ts;}}
   const spanS=h.length>1?(h[h.length-1].ts-h[0].ts):0;
   const perHour=spanS>0?(win*3600/spanS):0;
-  let html='<h3>'+name+' — reconexiones</h3>';
-  html+='<div class="mono" style="margin:.3rem 0 .6rem">total histórico: <b>'+(c.reconnects||0)+'</b> · en ventana ('+fmtU(spanS)+'): <b>'+win+'</b> · ~'+perHour.toFixed(1)+'/h'+(lastTs?' · última caída: '+new Date(lastTs*1000).toLocaleTimeString():' · sin caídas en la ventana')+'</div>';
+  let html='<h3>'+name+' — reconnections</h3>';
+  html+='<div class="mono" style="margin:.3rem 0 .6rem">all-time total: <b>'+(c.reconnects||0)+'</b> · in window ('+fmtU(spanS)+'): <b>'+win+'</b> · ~'+perHour.toFixed(1)+'/h'+(lastTs?' · last drop: '+new Date(lastTs*1000).toLocaleTimeString():' · no drops in window')+'</div>';
   html+=recBars(pts,520,90);
-  html+='<div class="muted" style="font-size:.75rem;margin-top:.3rem">cada barra = reconexiones en ese intervalo (~5s); ventana ~10 min</div>';
+  html+='<div class="muted" style="font-size:.75rem;margin-top:.3rem">each bar = reconnections in that interval (~5s); window ~10 min</div>';
   el.innerHTML=html;dlg.showModal();}
 function openLinks(name){
   const dlg=document.getElementById('dlg'),el=document.getElementById('dlgc');
-  const n=(name||'').toLowerCase();let html='<h3>'+name+' — enlaces del túnel</h3>';const rows=[];
-  if(n.indexOf('tk-')===0){
-    const r=n.slice(3),i=r.lastIndexOf('-');
-    const site=r.slice(0,i).replace(/[^a-z0-9]/g,''),role=r.slice(i+1).replace(/[^a-z0-9]/g,'');
-    const dom=location.host.split('.').slice(1).join('.');const U=x=>location.protocol+'//'+x+'.'+dom;
-    if(role==='ha'){rows.push(['principal','HA',U('ha'+site)]);
-      if(LAST['tk-'+site+'-router'])rows.push(['emergencia','router vía esta HA',U('ha'+site+'-router-b')]);}
-    else if(role==='router'){rows.push(['principal','router (LuCI)',U('ha'+site+'-router')]);
-      if(LAST['tk-'+site+'-ha'])rows.push(['emergencia','HA vía este router',U('ha'+site+'-b')]);}}
-  if(!rows.length)html+='<div class="muted">sin enlaces web</div>';
-  else{html+='<table><tr><th></th><th>destino</th><th>enlace</th></tr>';
+  const c=LAST[name]||{};let html='<h3>'+name+' — tunnel links</h3>';
+  const rows=(c.links||[]).map(l=>[l.kind,l.label,linkUrl(l.host)]).filter(x=>x[2]);
+  if(!rows.length)html+='<div class="muted">no web links (set TK_SERVER_LINKS on the server)</div>';
+  else{html+='<table><tr><th></th><th>target</th><th>link</th></tr>';
     rows.forEach(x=>{html+='<tr><td>'+x[0]+'</td><td class="mono">'+x[1]+'</td><td><a class="svc" href="'+x[2]+'" target="_blank" rel="noopener">'+x[2].replace(/^https?:\/\//,'')+'</a></td></tr>';});
     html+='</table>';}
   el.innerHTML=html;dlg.showModal();}
@@ -135,18 +130,18 @@ function upColor(p){return p>=99.5?'var(--up)':(p>=95?'var(--warn)':'var(--down)
 function upCell(c){const p=c.uptime_24h;
   if(p==null||p<0)return '<span class="muted">—</span>';
   const txt=(p>=99.95?p.toFixed(0):p.toFixed(1))+'%';
-  return '<button class="link mono" style="color:'+upColor(p)+'" onclick="openUptime(\''+c.name+'\')" title="disponibilidad 24h/7d">'+txt+'</button>';}
+  return '<button class="link mono" style="color:'+upColor(p)+'" onclick="openUptime(\''+c.name+'\')" title="availability 24h/7d">'+txt+'</button>';}
 async function openUptime(name){
   const dlg=document.getElementById('dlg'),el=document.getElementById('dlgc');
   el.innerHTML='loading…';dlg.showModal();
   try{const d=await (await fetch('/api/uptime?client='+encodeURIComponent(name),{cache:'no-store'})).json();
     const ev=(d.events||[]);const now=d.now||Math.floor(Date.now()/1000);
     function block(label,win){const r=upCompute(ev,now-win,now);
-      const pct=r.pct==null?'sin datos':r.pct.toFixed(2)+'%';
-      return '<div style="margin:.2rem 0 .7rem"><div class="mono" style="margin-bottom:.25rem">'+label+' · disponibilidad <b style="color:'+(r.pct==null?'var(--muted)':upColor(r.pct))+'">'+pct+'</b></div>'+upBarSvg(r.segs,560,22)+'</div>';}
-    let h='<h3 style="margin-bottom:.4rem">'+name+' — disponibilidad</h3>';
-    h+=block('Últimas 24 h',86400)+block('Últimos 7 días',7*86400);
-    h+='<div class="muted" style="font-size:.72rem">verde = conectado · rojo = caído · gris = sin datos</div>';
+      const pct=r.pct==null?'no data':r.pct.toFixed(2)+'%';
+      return '<div style="margin:.2rem 0 .7rem"><div class="mono" style="margin-bottom:.25rem">'+label+' · availability <b style="color:'+(r.pct==null?'var(--muted)':upColor(r.pct))+'">'+pct+'</b></div>'+upBarSvg(r.segs,560,22)+'</div>';}
+    let h='<h3 style="margin-bottom:.4rem">'+name+' — availability</h3>';
+    h+=block('Last 24 h',86400)+block('Last 7 days',7*86400);
+    h+='<div class="muted" style="font-size:.72rem">green = connected · red = down · grey = no data</div>';
     el.innerHTML=h;
   }catch(e){el.innerHTML='error: '+e;}}
 async function tick(){try{
@@ -169,7 +164,7 @@ async function tick(){try{
       '<td class="mono">'+fmtB(c.traffic_today||0)+'</td><td class="mono">-</td><td>'+upCell(c)+'</td></tr>';
   }).join('');
   document.getElementById('rows').innerHTML=(on.map(c=>{
-    const rc='<button class="link mono'+((c.reconnects||0)>=5?' hi':'')+'" onclick="openRec(\''+c.name+'\')" title="ver caídas en el tiempo">'+(c.reconnects||0)+((c.reconnects||0)>=5?' ⚠':'')+'</button>';
+    const rc='<button class="link mono'+((c.reconnects||0)>=5?' hi':'')+'" onclick="openRec(\''+c.name+'\')" title="drops over time">'+(c.reconnects||0)+((c.reconnects||0)>=5?' ⚠':'')+'</button>';
     const h=c.hist||[];const rx=h.map(s=>s.rx),tx=h.map(s=>s.tx);
     const traf='<div class="spark"><div>'+spark(rx,60,20,'var(--rx)')+spark(tx,60,10,'var(--tx)')+'</div>'+
       '<button class="link mono" onclick="openTraffic(\''+c.name+'\')" title="view by port/day">'+fmtB(c.traffic_today)+'</button></div>';
@@ -177,10 +172,10 @@ async function tick(){try{
     if(c.speedtest){sp='<div class="spark"><button onclick="speed(\''+c.name+'\',this)">Measure</button>'+
       '<span class="res mono muted">'+(c.last_down?c.last_down.toFixed(1)+'↓ '+c.last_up.toFixed(1)+'↑':'')+'</span>'+
       spark(c.speed_hist,50,20,'var(--accent)')+'</div>';}
-    const _u=svcUrl(c.name);
+    const _u=mainUrl(c);
     const nm=_u?'<a class="svc" href="'+_u+'" target="_blank" rel="noopener" title="open main web">'+c.name+'</a>':'<b>'+c.name+'</b>';
     return '<tr><td>'+nm+'<br><span class="mono muted" style="font-size:.75rem">'+(c.ports||[]).join(' ')+'</span></td>'+
-      '<td><button class="badge up linkbadge" onclick="openLinks(\''+c.name+'\')" title="enlaces del túnel (principal + emergencia)"><span class="dot"></span>ON</button></td><td class="mono">'+(c.ip||'-')+'</td>'+
+      '<td><button class="badge up linkbadge" onclick="openLinks(\''+c.name+'\')" title="tunnel links (main + backup)"><span class="dot"></span>ON</button></td><td class="mono">'+(c.ip||'-')+'</td>'+
       '<td class="mono">'+fmtU(c.uptime_seconds)+'</td><td class="mono">'+(c.active||0)+'</td>'+
       '<td>'+rc+'</td><td class="mono muted">'+(c.latency_ms?c.latency_ms.toFixed(0)+' ms':'-')+'</td>'+
       '<td>'+traf+'</td><td>'+sp+'</td><td>'+upCell(c)+'</td></tr>';

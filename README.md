@@ -179,6 +179,20 @@ Key settings (see `server/docker-compose.yml`):
 - `TK_SERVER_AUTHORIZED_KEYS=/data/authorized_keys` — allowed public keys.
 - `TK_SERVER_TRAFFIC_FILE=/data/traffic.json` — per-port/per-day traffic
   persistence.
+- `TK_SERVER_LINKS` (optional) — web links the panel shows per client, for
+  clients named `tk-<site>-<role>`. A `role=template` list with `{site}` /
+  `{role}` placeholders, giving the **subdomain label** of that client's main
+  service under the panel's own domain. Example:
+  `TK_SERVER_LINKS="ha=ha{site},router=ha{site}-router"` links `tk-home-ha`
+  to `hahome.<panel domain>` and `tk-home-router` to
+  `hahome-router.<panel domain>`. Requests arriving at the monitor with that
+  host label are reverse-proxied to the client's lowest forwarded port. Empty
+  (default) = no links, no host-based proxying.
+- `TK_SERVER_LINK_BACKUP_SUFFIX` (optional, e.g. `-b`) — also offer, for each
+  client, a **backup** link to the sibling client of the same site (other
+  role) reached through this one, at `<sibling label><suffix>`. Useful when
+  two devices at a site (e.g. a Home Assistant box and its router) forward
+  each other's SSH/web as a fallback.
 
 The `/data` volume holds `host_key`, `authorized_keys` and `traffic.json`.
 

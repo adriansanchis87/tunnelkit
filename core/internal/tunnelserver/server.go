@@ -77,7 +77,8 @@ func Run(cfg *config.Config) error {
 	store := monitor.NewTrafficStore(cfg.ServerTrafficFile)
 	if cfg.ServerMonitorAddr != "" {
 		go func() {
-			if err := monitor.Serve(cfg.ServerMonitorAddr, reg, store); err != nil {
+			links := monitor.ParseLinkConfig(cfg.ServerLinks, cfg.ServerLinkBackupSuffix)
+			if err := monitor.Serve(cfg.ServerMonitorAddr, reg, store, links); err != nil {
 				log.Printf("monitor: %v", err)
 			}
 		}()

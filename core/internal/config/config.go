@@ -46,6 +46,16 @@ type Config struct {
 	ServerAuthorizedKeys string // authorized_keys with permitlisten
 	ServerMonitorAddr    string // web panel (empty = off, e.g. ":9090")
 	ServerTrafficFile    string // per-port/per-day traffic persistence
+	// ServerLinks maps a client ROLE to the subdomain label of its main web
+	// service, for clients named "tk-<site>-<role>". Format:
+	// "role=template,role=template" with {site} and {role} placeholders, e.g.
+	// "ha=ha{site},router=ha{site}-router". Empty = the panel shows no links
+	// and the monitor does no host-based reverse proxying.
+	ServerLinks string
+	// ServerLinkBackupSuffix, when set (e.g. "-b"), adds a "backup" link per
+	// client: the sibling client of the same site (other role) reached through
+	// this one, at <sibling main label><suffix>.
+	ServerLinkBackupSuffix string
 }
 
 const optionsFile = "/data/options.json"
@@ -156,6 +166,8 @@ func (c *Config) applyEnv() {
 	setStr(&c.ServerAuthorizedKeys, "TK_SERVER_AUTHORIZED_KEYS")
 	setStr(&c.ServerMonitorAddr, "TK_SERVER_MONITOR_ADDR")
 	setStr(&c.ServerTrafficFile, "TK_SERVER_TRAFFIC_FILE")
+	setStr(&c.ServerLinks, "TK_SERVER_LINKS")
+	setStr(&c.ServerLinkBackupSuffix, "TK_SERVER_LINK_BACKUP_SUFFIX")
 }
 
 func (c *Config) applyFlags(args []string) {

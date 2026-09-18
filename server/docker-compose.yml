@@ -10,6 +10,9 @@ services:
       TK_SERVER_AUTHORIZED_KEYS: /data/authorized_keys  # pubkeys + permitlisten
       TK_SERVER_MONITOR_ADDR: ":9090"               # web monitor panel (empty = off)
       TK_SERVER_TRAFFIC_FILE: /data/traffic.json    # per-port/per-day traffic
+      # Optional: panel links + host-based proxy for clients named tk-<site>-<role>
+      # TK_SERVER_LINKS: "ha=ha{site},router=ha{site}-router"
+      # TK_SERVER_LINK_BACKUP_SUFFIX: "-b"
     volumes:
       - ./data:/data
     ports:

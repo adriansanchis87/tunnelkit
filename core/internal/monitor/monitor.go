@@ -192,6 +192,99 @@ type row struct {
 	// Uptime24h is the % of the last 24h the client was connected (from the
 	// availability log); -1 when there is no data.
 	Uptime24h float64 `json:"uptime_24h"`
+	// Links are the web entry points the panel offers for this client, built
+	// from the operator's LinkConfig (empty when no template matches).
+	Links []link `json:"links,omitempty"`
+}
+
+// link is one web entry point of a client. Kind is "main" (the client's own
+// service) or "backup" (the sibling client of the same site, reached through
+// this one). Host is the subdomain label only: the panel prepends the scheme
+// and appends the panel's own parent domain.
+type link struct {
+	Kind  string `json:"kind"`
+	Label string `json:"label"`
+	Host  string `json:"host"`
+}
+
+// LinkConfig turns client names of the form "tk-<site>-<role>" into subdomain
+// labels. It is entirely operator-provided (TK_SERVER_LINKS /
+// TK_SERVER_LINK_BACKUP_SUFFIX): nothing about a particular deployment's
+// naming lives in the code.
+type LinkConfig struct {
+	Templates    map[string]string // role -> template with {site} and {role}
+	BackupSuffix string
+}
+
+// ParseLinkConfig parses "role=template,role=template" (spaces tolerated).
+func ParseLinkConfig(spec, backupSuffix string) LinkConfig {
+	lc := LinkConfig{Templates: map[string]string{}, BackupSuffix: backupSuffix}
+	for _, kv := range strings.Split(spec, ",") {
+		kv = strings.TrimSpace(kv)
+		if kv == "" {
+			continue
+		}
+		if i := strings.IndexByte(kv, '='); i > 0 {
+			lc.Templates[strings.ToLower(strings.TrimSpace(kv[:i]))] = strings.TrimSpace(kv[i+1:])
+		}
+	}
+	return lc
+}
+
+// splitName parses "tk-<site>-<role>" into (site, role), lowercase and
+// alphanumeric only; ok=false for any other name.
+func splitName(name string) (site, role string, ok bool) {
+	name = strings.ToLower(name)
+	if !strings.HasPrefix(name, "tk-") {
+		return "", "", false
+	}
+	rest := strings.TrimPrefix(name, "tk-")
+	i := strings.LastIndex(rest, "-")
+	if i < 0 {
+		return "", "", false
+	}
+	site, role = onlyAlnum(rest[:i]), onlyAlnum(rest[i+1:])
+	return site, role, site != "" && role != ""
+}
+
+// mainHost is the subdomain label of a client's main service, or "" when the
+// operator configured no template for its role.
+func (lc LinkConfig) mainHost(name string) string {
+	site, role, ok := splitName(name)
+	if !ok {
+		return ""
+	}
+	t, ok := lc.Templates[role]
+	if !ok {
+		return ""
+	}
+	return strings.NewReplacer("{site}", site, "{role}", role).Replace(t)
+}
+
+// linksFor builds the panel links of a client: its main service and, if a
+// sibling of the same site with another role is known, a backup link to that
+// sibling through this client (<sibling main label><BackupSuffix>).
+func (lc LinkConfig) linksFor(name string, known []string) []link {
+	main := lc.mainHost(name)
+	if main == "" {
+		return nil
+	}
+	_, role, _ := splitName(name)
+	out := []link{{Kind: "main", Label: role, Host: main}}
+	if lc.BackupSuffix == "" {
+		return out
+	}
+	site, _, _ := splitName(name)
+	for _, other := range known {
+		os_, orole, ok := splitName(other)
+		if !ok || os_ != site || orole == role {
+			continue
+		}
+		if h := lc.mainHost(other); h != "" {
+			out = append(out, link{Kind: "backup", Label: orole + " via " + role, Host: h + lc.BackupSuffix})
+		}
+	}
+	return out
 }
 
 func (c *Client) row() row {
@@ -214,7 +307,7 @@ func (c *Client) row() row {
 }
 
 // Serve starts the web panel (blocking) + the background sampler.
-func Serve(addr string, reg *Registry, store *TrafficStore) error {
+func Serve(addr string, reg *Registry, store *TrafficStore, links LinkConfig) error {
 	startAt := time.Now()
 	go func() {
 		for range time.Tick(5 * time.Second) {
@@ -251,6 +344,21 @@ func Serve(addr string, reg *Registry, store *TrafficStore) error {
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, _ *http.Request) {
 		var rows []row
 		connected := map[string]bool{}
+		// Every client name we know, connected or not (for backup links).
+		knownSet := map[string]bool{}
+		for _, c := range reg.list() {
+			knownSet[c.Name] = true
+		}
+		if store != nil {
+			for name := range store.Seen() {
+				knownSet[name] = true
+			}
+		}
+		known := make([]string, 0, len(knownSet))
+		for name := range knownSet {
+			known = append(known, name)
+		}
+		sort.Strings(known)
 		for _, c := range reg.list() {
 			r := c.row()
 			r.Uptime24h = -1
@@ -258,6 +366,7 @@ func Serve(addr string, reg *Registry, store *TrafficStore) error {
 				r.TrafficToday = store.todayTotal(c.Name)
 				r.Uptime24h = store.uptimePct(c.Name, 86400)
 			}
+			r.Links = links.linksFor(c.Name, known)
 			rows = append(rows, r)
 			connected[c.Name] = true
 		}
@@ -279,6 +388,7 @@ func Serve(addr string, reg *Registry, store *TrafficStore) error {
 					TrafficToday:   store.todayTotal(name),
 					OfflineSeconds: off,
 					Uptime24h:      store.uptimePct(name, 86400),
+					Links:          links.linksFor(name, known),
 				})
 			}
 		}
@@ -346,10 +456,10 @@ func Serve(addr string, reg *Registry, store *TrafficStore) error {
 		_, _ = io.WriteString(w, page)
 	})
 
-	// Root handler: if the request host is a client's subdomain
-	// (tkha<site> / tkrouter<site>), reverse-proxy to that client's main
-	// forwarded service at the ROOT path (so Home Assistant / LuCI work).
-	// Otherwise serve the dashboard/API.
+	// Root handler: if the request's host label equals a connected client's
+	// main-service label (per LinkConfig), reverse-proxy to that client's
+	// lowest forwarded port at the ROOT path, so web apps that expect to be
+	// served from "/" work. Otherwise serve the dashboard/API.
 	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host := r.Host
 		if h, _, err := net.SplitHostPort(host); err == nil {
@@ -359,9 +469,9 @@ func Serve(addr string, reg *Registry, store *TrafficStore) error {
 		if i := strings.IndexByte(host, '.'); i >= 0 {
 			label = host[:i]
 		}
-		if label != "" {
+		if label != "" && len(links.Templates) > 0 {
 			for _, c := range reg.list() {
-				if hostFor(c.Name) == label {
+				if links.mainHost(c.Name) == label {
 					port := mainPort(c)
 					if port == 0 {
 						http.Error(w, "client has no forwarded service", http.StatusBadGateway)
@@ -385,27 +495,6 @@ func Serve(addr string, reg *Registry, store *TrafficStore) error {
 	return http.ListenAndServe(addr, root)
 }
 
-// hostFor is the subdomain label for a client's main service:
-// "tk-caseta-ha" -> "tkhacaseta", "tk-caseta-router" -> "tkroutercaseta".
-// Returns "" for clients without a site-role name (e.g. argos), which get no
-// URL. The dashboard builds the same label in JS to link each client.
-func hostFor(name string) string {
-	if !strings.HasPrefix(name, "tk-") {
-		return ""
-	}
-	rest := strings.TrimPrefix(name, "tk-") // "caseta-ha"
-	i := strings.LastIndex(rest, "-")
-	if i < 0 {
-		return ""
-	}
-	site := onlyAlnum(rest[:i])
-	role := onlyAlnum(rest[i+1:])
-	if site == "" || role == "" {
-		return ""
-	}
-	return "tk" + role + site
-}
-
 func onlyAlnum(s string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(s) {
@@ -416,8 +505,9 @@ func onlyAlnum(s string) string {
 	return b.String()
 }
 
-// mainPort returns a client's lowest forwarded port (the x40 service: HA/LuCI;
-// x42/x43 are stats and speedtest).
+// mainPort returns a client's lowest forwarded port, taken as its main web
+// service (by convention the extra forwards — stats, speedtest — use higher
+// port numbers).
 func mainPort(c *Client) uint32 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
