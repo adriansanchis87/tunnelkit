@@ -44,7 +44,7 @@ const page = `<!doctype html>
   <div class="summary" id="sum"></div>
   <div class="wrap"><table><thead><tr>
     <th>Client</th><th>Status</th><th>Source IP</th><th>Uptime</th><th>Conns</th>
-    <th>Reconns</th><th>Latency</th><th>Traffic ↓/↑ · today</th><th>Speedtest</th><th>Disponib. 24h</th>
+    <th>Reconns</th><th>Latency</th><th>Traffic ↓/↑ · today</th><th>Speedtest</th><th>Availability 24h</th>
   </tr></thead><tbody id="rows"></tbody></table></div>
   <dialog id="dlg"><div id="dlgc"></div><br>
     <button onclick="document.getElementById('dlg').close()">Close</button></dialog>
