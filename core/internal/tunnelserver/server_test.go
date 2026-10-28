@@ -272,6 +272,98 @@ func TestServerSendsKeepalive(t *testing.T) {
 	}
 }
 
+// TestUnansweredKeepaliveClosesSession reproduces a half-open link: the client
+// reads the server's keepalive but never replies, as when the path silently
+// swallows packets. Without a probe timeout SendRequest blocks until TCP gives
+// up (~15 min) and the forwarded port stays bound; with it the session is
+// closed and the port freed after KeepaliveTimeout.
+func TestUnansweredKeepaliveClosesSession(t *testing.T) {
+	oldKA, oldTO := KeepaliveInterval, KeepaliveTimeout
+	KeepaliveInterval, KeepaliveTimeout = 50*time.Millisecond, 200*time.Millisecond
+	defer func() { KeepaliveInterval, KeepaliveTimeout = oldKA, oldTO }()
+
+	key := newSigner(t)
+	port := freePort(t)
+	addr, stop := startTestServer(t, key.PublicKey(), "tk-test", port)
+	defer stop()
+
+	raw, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &ssh.ClientConfig{
+		User:            "tunnel",
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(key)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         3 * time.Second,
+	}
+	cc, chans, reqs, err := ssh.NewClientConn(raw, addr, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cc.Close()
+	go func() {
+		for range chans {
+		}
+	}()
+	go func() {
+		for range reqs { // read the keepalives, never reply
+		}
+	}()
+
+	fwd := struct {
+		Addr string
+		Port uint32
+	}{"0.0.0.0", port}
+	if ok, _, err := cc.SendRequest("tcpip-forward", true, ssh.Marshal(&fwd)); err != nil || !ok {
+		t.Fatalf("forward: ok=%v err=%v", ok, err)
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		cc.Wait()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("server kept a session whose keepalives go unanswered")
+	}
+
+	freed := false
+	for i := 0; i < 40; i++ {
+		if l, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port)); err == nil {
+			l.Close()
+			freed = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !freed {
+		t.Fatalf("port %d still bound after the session was closed for missed keepalives", port)
+	}
+}
+
+// TestAnsweredKeepaliveKeepsSession guards against the timeout being too
+// aggressive: a client that replies must stay connected well past
+// KeepaliveTimeout.
+func TestAnsweredKeepaliveKeepsSession(t *testing.T) {
+	oldKA, oldTO := KeepaliveInterval, KeepaliveTimeout
+	KeepaliveInterval, KeepaliveTimeout = 50*time.Millisecond, 200*time.Millisecond
+	defer func() { KeepaliveInterval, KeepaliveTimeout = oldKA, oldTO }()
+
+	key := newSigner(t)
+	addr, stop := startTestServer(t, key.PublicKey(), "tk-test")
+	defer stop()
+
+	c, _ := dialClient(t, addr, key) // ssh.Client replies to global requests
+	defer c.Close()
+	time.Sleep(4 * KeepaliveTimeout)
+	if _, _, err := c.SendRequest("ping", true, nil); err != nil {
+		t.Fatalf("healthy session was closed: %v", err)
+	}
+}
+
 // TestForwardNotAllowed guards the existing permitlisten behaviour: a port not
 // in the key's allowlist must be refused.
 func TestForwardNotAllowed(t *testing.T) {

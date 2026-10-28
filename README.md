@@ -278,6 +278,9 @@ The server guards against this without a restart:
 - **Server → client keepalive** (`KeepaliveInterval`, default 20s): probes each
   session with `keepalive@openssh.com`; a failed probe closes the session and
   frees its ports. This is the equivalent of OpenSSH sshd's `ClientAliveInterval`.
+  A probe that goes **unanswered** for `KeepaliveTimeout` (default 30s) also
+  closes the session: on a half-open link (packets silently swallowed) the probe
+  would otherwise block until TCP gave up, ~15 min, with the port still bound.
 - **Evict-on-reconnect** (`EvictWait`, default 5s): a new connection for the same
   client name closes the previous session and waits for it to release its
   listeners, so the reconnect reclaims its ports immediately — even before the
@@ -285,7 +288,8 @@ The server guards against this without a restart:
 - TCP keepalive on accepted connections and a handshake deadline as backstops.
 
 Covered by `internal/tunnelserver/server_test.go` (eviction, no listener leak on
-clean disconnect, keepalive is sent, permitlisten still enforced).
+clean disconnect, keepalive is sent, unanswered keepalive closes the session and
+frees the port, permitlisten still enforced).
 
 ## Status
 
