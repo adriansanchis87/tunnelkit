@@ -34,6 +34,13 @@ import (
 // way a mobile/satellite link does (the TCP socket would otherwise linger for
 // minutes, keeping the port bound and blocking the client's reconnect).
 //
+// KeepaliveTimeout: how long a probe may go unanswered before the session is
+// closed. SendRequest(wantReply=true) has no deadline of its own, so on a link
+// that silently swallows packets (half-open: the socket looks fine, nothing
+// comes back) the probe would block until TCP gives up retransmitting, ~15 min,
+// and the forwarded port would stay bound the whole time. This is the
+// equivalent of ClientAliveInterval * ClientAliveCountMax in OpenSSH sshd.
+//
 // EvictWait: when a client reconnects, the server closes its previous (stale)
 // session and waits up to this long for that session to release its listeners,
 // so the reconnecting client reclaims its ports immediately instead of failing
@@ -43,6 +50,7 @@ import (
 // connections cannot pile up.
 var (
 	KeepaliveInterval = 20 * time.Second
+	KeepaliveTimeout  = 30 * time.Second
 	EvictWait         = 5 * time.Second
 	HandshakeTimeout  = 15 * time.Second
 )
@@ -174,8 +182,9 @@ func handleConn(c net.Conn, sconf *ssh.ServerConfig, reg *monitor.Registry, mgr 
 	close(s.done)
 }
 
-// keepalive probes the client until the session ends; a failed probe closes the
-// connection, which ends the request loop and frees the listeners.
+// keepalive probes the client until the session ends; a failed or unanswered
+// probe closes the connection, which ends the request loop and frees the
+// listeners.
 func (s *session) keepalive() {
 	t := time.NewTicker(KeepaliveInterval)
 	defer t.Stop()
@@ -184,11 +193,34 @@ func (s *session) keepalive() {
 		case <-s.done:
 			return
 		case <-t.C:
-			if _, _, err := s.sconn.SendRequest("keepalive@openssh.com", true, nil); err != nil {
+			if !s.probe() {
 				s.sconn.Close()
 				return
 			}
 		}
+	}
+}
+
+// probe sends one keepalive and reports whether the client answered within
+// KeepaliveTimeout. Closing the connection (by the caller, or by the session
+// ending) unblocks the SendRequest goroutine, so it never outlives the session.
+func (s *session) probe() bool {
+	res := make(chan error, 1)
+	go func() {
+		_, _, err := s.sconn.SendRequest("keepalive@openssh.com", true, nil)
+		res <- err
+	}()
+	timer := time.NewTimer(KeepaliveTimeout)
+	defer timer.Stop()
+	select {
+	case err := <-res:
+		return err == nil
+	case <-timer.C:
+		log.Printf("tunnelserver: %s (%s) keepalive unanswered for %s, closing session",
+			s.name, s.sconn.RemoteAddr(), KeepaliveTimeout)
+		return false
+	case <-s.done:
+		return true // session already ending; keepalive() exits on its next select
 	}
 }
 
