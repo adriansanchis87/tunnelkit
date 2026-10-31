@@ -26,6 +26,10 @@ type Config struct {
 	ReconnectDelay      time.Duration // wait between retries
 	SSHImpl             string        // "openssh" (default) or "dropbear" (OpenWrt)
 	SSHCommand          string        // ssh binary to use (default "ssh")
+	// NoPrecheck disables the pre-flight probe (TCP connect + SSH banner) the
+	// client runs before each ssh attempt (TK_NO_PRECHECK=1). Skipped anyway
+	// when other_ssh_options use a Proxy*.
+	NoPrecheck bool
 
 	// --- stats ---
 	StatsAddr        string // where the client serves /metrics (":9100")
@@ -156,6 +160,9 @@ func (c *Config) applyEnv() {
 	setStr(&c.ExtraSSHOpts, "TK_EXTRA_SSH_OPTS")
 	setStr(&c.SSHImpl, "TK_SSH_IMPL")
 	setStr(&c.SSHCommand, "TK_SSH_COMMAND")
+	if v := os.Getenv("TK_NO_PRECHECK"); v != "" && v != "0" && !strings.EqualFold(v, "false") {
+		c.NoPrecheck = true
+	}
 	setStr(&c.StatsAddr, "TK_STATS_ADDR")
 	setInt(&c.StatsForwardPort, "TK_STATS_FORWARD_PORT")
 	setStr(&c.SpeedtestListen, "TK_SPEEDTEST_LISTEN")

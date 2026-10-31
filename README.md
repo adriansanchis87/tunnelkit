@@ -196,6 +196,31 @@ Key settings (see `server/docker-compose.yml`):
 
 The `/data` volume holds `host_key`, `authorized_keys` and `traffic.json`.
 
+### Diagnosing a client that will not connect
+
+When a client is offline, the server records what reached it from the client's
+last known IP, so "nothing arrives" can be told apart from "connections arrive
+and fail":
+
+- `GET /api/status` → each **offline** client row carries `last_ip`,
+  `last_attempt_seconds_ago`, `last_attempt_error`, `failed_attempts` and a
+  plain-text `diagnosis` (e.g. *no connection from X has reached the server
+  since the client went down* vs *3 connection(s) from X reached the server and
+  failed; last 40s ago: no complete SSH handshake within 15s*). The top-level
+  `failed_handshakes` lists the 20 most recent failed handshakes, newest first.
+- The server log prints every failed handshake from a known client's IP
+  (`handshake failed from … after …: …`); failures from unknown IPs (port
+  scanners) are rate-limited to one line per IP every 5 minutes.
+- The **client** runs a pre-flight probe before each `ssh` attempt (TCP connect,
+  then wait for the server's SSH banner) and logs exactly how far it got, e.g.
+  `TCP connected … but no SSH banner within 10s: the connection opens and then
+  stalls or is filtered`. When the probe fails, ssh is not started (OpenSSH
+  without a connect timeout can hang silently on such a connection). OpenSSH is
+  also started with `ConnectTimeout=20`, and the client reports itself as
+  connected only after ssh has stayed up longer than that. Disable the probe
+  with `TK_NO_PRECHECK=1`; it is skipped automatically when `other_ssh_options`
+  use a `Proxy*` option.
+
 **authorized_keys format**: one public key per client, each restricted to the
 ports it may forward with `permitlisten="PORT"` (repeat the option for several
 ports):

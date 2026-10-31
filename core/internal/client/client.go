@@ -23,6 +23,13 @@ import (
 	"github.com/adriansanchis87/tunnelkit/internal/stats"
 )
 
+// connectTimeout bounds ssh's TCP connect + banner exchange (OpenSSH); the
+// client reports "connected" only after connectSettle, which is longer.
+const (
+	connectTimeout = 20
+	connectSettle  = (connectTimeout + 5) * time.Second
+)
+
 // Run starts the tunnel supervisor (blocks until a stop signal).
 func Run(cfg *config.Config) error {
 	if cfg.Host == "" {
@@ -48,7 +55,22 @@ func Run(cfg *config.Config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	precheck := !cfg.NoPrecheck && !strings.Contains(strings.ToLower(cfg.ExtraSSHOpts), "proxy")
 	for ctx.Err() == nil {
+		if precheck {
+			if msg, err := probe(cfg.Host, cfg.SSHPort); err != nil {
+				st.RecordDisconnect(0, err)
+				log.Printf("tunnelkit: pre-flight failed, not starting ssh: %v", err)
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-time.After(cfg.ReconnectDelay):
+				}
+				continue
+			} else {
+				log.Printf("tunnelkit: pre-flight ok: %s", msg)
+			}
+		}
 		start := time.Now()
 		cmd := buildSSH(ctx, cfg)
 		log.Printf("tunnelkit: connecting to %s@%s:%d", cfg.User, cfg.Host, cfg.SSHPort)
@@ -57,8 +79,11 @@ func Run(cfg *config.Config) error {
 			st.RecordDisconnect(0, err)
 			log.Printf("tunnelkit: ssh failed to start: %v", err)
 		} else {
-			st.SetConnected()
+			// "Connected" only once ssh has stayed up past the connect timeout:
+			// right after Start it is still connecting (and may be stuck).
+			settled := time.AfterFunc(connectSettle, func() { st.SetConnectedSince(start) })
 			err := cmd.Wait()
+			settled.Stop()
 			st.RecordDisconnect(time.Since(start), err)
 			if ctx.Err() != nil {
 				return nil
@@ -108,6 +133,7 @@ func opensshArgs(cfg *config.Config) []string {
 	args := []string{
 		"-N", "-T",
 		"-o", "ExitOnForwardFailure=yes",
+		"-o", "ConnectTimeout=" + strconv.Itoa(connectTimeout),
 		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "ServerAliveInterval=" + strconv.Itoa(cfg.ServerAliveInterval),
 		"-o", "ServerAliveCountMax=" + strconv.Itoa(cfg.ServerAliveCountMax),

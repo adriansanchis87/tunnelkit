@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -378,4 +379,55 @@ func TestForwardNotAllowed(t *testing.T) {
 	if _, err := c.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", other)); err == nil {
 		t.Fatalf("forward of disallowed port %d was accepted", other)
 	}
+}
+
+// A connection that opens but never completes the handshake (the failure seen
+// through the satellite link) must be recorded and described, not vanish.
+func TestStalledHandshakeIsRecorded(t *testing.T) {
+	old := HandshakeTimeout
+	HandshakeTimeout = 300 * time.Millisecond
+	defer func() { HandshakeTimeout = old }()
+
+	_, priv, _ := ed25519.GenerateKey(rand.Reader)
+	host, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sconf := &ssh.ServerConfig{NoClientAuth: false}
+	sconf.PublicKeyCallback = func(ssh.ConnMetadata, ssh.PublicKey) (*ssh.Permissions, error) {
+		return nil, fmt.Errorf("unauthorized")
+	}
+	sconf.AddHostKey(host)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	reg := monitor.NewRegistry()
+	mgr := newSessionManager()
+	go func() {
+		c, err := ln.Accept()
+		if err == nil {
+			handleConn(c, sconf, reg, mgr, nil)
+		}
+	}()
+
+	raw, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close() // never sends anything
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if got := reg.Attempts().Recent(5); len(got) == 1 {
+			if !strings.Contains(got[0].Error, "no complete SSH handshake") || got[0].IP != "127.0.0.1" {
+				t.Fatalf("unexpected attempt: %+v", got[0])
+			}
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("stalled handshake was not recorded")
 }

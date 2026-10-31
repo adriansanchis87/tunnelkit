@@ -58,15 +58,52 @@ type Client struct {
 
 // Registry is the shared state of connected clients (thread-safe).
 type Registry struct {
-	mu sync.Mutex
-	m  map[string]*Client
+	mu     sync.Mutex
+	m      map[string]*Client
+	lastIP map[string]string // client name -> IP of its last connection
+	att    *Attempts
 }
 
-func NewRegistry() *Registry { return &Registry{m: map[string]*Client{}} }
+func NewRegistry() *Registry {
+	return &Registry{m: map[string]*Client{}, lastIP: map[string]string{}, att: NewAttempts()}
+}
 
-func (r *Registry) Add(id string, c *Client) { r.mu.Lock(); r.m[id] = c; r.mu.Unlock() }
-func (r *Registry) Del(id string)            { r.mu.Lock(); delete(r.m, id); r.mu.Unlock() }
-func (r *Registry) Get(id string) *Client    { r.mu.Lock(); defer r.mu.Unlock(); return r.m[id] }
+func (r *Registry) Add(id string, c *Client) {
+	r.mu.Lock()
+	r.m[id] = c
+	if c.Name != "" && c.IP != "" {
+		r.lastIP[c.Name] = c.IP
+	}
+	r.mu.Unlock()
+}
+
+// Attempts is the record of connections that reached the server but failed.
+func (r *Registry) Attempts() *Attempts { return r.att }
+
+// LastIP is the IP a known client last connected from ("" if unknown).
+func (r *Registry) LastIP(name string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lastIP[name]
+}
+
+// ClientAt returns the name of the known client whose last connection came
+// from ip ("" if none); several clients behind one NAT share it, so it returns
+// the names joined by "/".
+func (r *Registry) ClientAt(ip string) string {
+	r.mu.Lock()
+	var names []string
+	for n, i := range r.lastIP {
+		if i == ip {
+			names = append(names, n)
+		}
+	}
+	r.mu.Unlock()
+	sort.Strings(names)
+	return strings.Join(names, "/")
+}
+func (r *Registry) Del(id string)         { r.mu.Lock(); delete(r.m, id); r.mu.Unlock() }
+func (r *Registry) Get(id string) *Client { r.mu.Lock(); defer r.mu.Unlock(); return r.m[id] }
 
 func (r *Registry) AddPort(id string, port uint32) {
 	r.mu.Lock()
@@ -195,6 +232,14 @@ type row struct {
 	// Links are the web entry points the panel offers for this client, built
 	// from the operator's LinkConfig (empty when no template matches).
 	Links []link `json:"links,omitempty"`
+	// The fields below are only set on OFFLINE rows. They say what the server
+	// saw from the client's last known IP since it went down: nothing at all,
+	// or connections that arrived and failed (and how).
+	LastIP           string   `json:"last_ip,omitempty"`
+	LastAttemptAgo   *float64 `json:"last_attempt_seconds_ago,omitempty"`
+	LastAttemptError string   `json:"last_attempt_error,omitempty"`
+	FailedAttempts   int      `json:"failed_attempts,omitempty"`
+	Diagnosis        string   `json:"diagnosis,omitempty"`
 }
 
 // link is one web entry point of a client. Kind is "main" (the client's own
@@ -382,19 +427,31 @@ func Serve(addr string, reg *Registry, store *TrafficStore, links LinkConfig) er
 				if off < 0 {
 					off = 0
 				}
-				rows = append(rows, row{
-					Name:           name,
-					Connected:      false,
-					TrafficToday:   store.todayTotal(name),
-					OfflineSeconds: off,
-					Uptime24h:      store.uptimePct(name, 86400),
-					Links:          links.linksFor(name, known),
-				})
+				ip := reg.LastIP(name)
+				diag, ago, lerr, fails := reg.Attempts().Diagnose(ip, lastSeen)
+				orow := row{
+					Name:             name,
+					Connected:        false,
+					TrafficToday:     store.todayTotal(name),
+					OfflineSeconds:   off,
+					Uptime24h:        store.uptimePct(name, 86400),
+					Links:            links.linksFor(name, known),
+					LastIP:           ip,
+					LastAttemptError: lerr,
+					FailedAttempts:   fails,
+					Diagnosis:        diag,
+				}
+				if ago >= 0 {
+					orow.LastAttemptAgo = &ago
+				}
+				rows = append(rows, orow)
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"generated_at": time.Now().Unix(), "clients": rows,
+			// Newest first: connections that reached the server and failed.
+			"failed_handshakes": reg.Attempts().Recent(20),
 		})
 	})
 	mux.HandleFunc("/api/traffic", func(w http.ResponseWriter, req *http.Request) {

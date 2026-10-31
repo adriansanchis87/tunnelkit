@@ -43,6 +43,15 @@ func (s *Stats) SetConnected() {
 	s.sessionAt = time.Now()
 }
 
+// SetConnectedSince marks the session as established at t (the moment ssh was
+// started, once it has stayed up long enough to be considered connected).
+func (s *Stats) SetConnectedSince(t time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.connected = true
+	s.sessionAt = t
+}
+
 // RecordDisconnect records the end of a session (reconnection).
 func (s *Stats) RecordDisconnect(d time.Duration, err error) {
 	s.mu.Lock()

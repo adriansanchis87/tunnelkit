@@ -9,6 +9,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -113,6 +114,27 @@ func Run(cfg *config.Config) error {
 	}
 }
 
+// describeHandshakeErr turns a handshake error into a sentence that says what
+// was observed on the wire.
+func describeHandshakeErr(err error) string {
+	var ne net.Error
+	switch {
+	case errors.As(err, &ne) && ne.Timeout():
+		return fmt.Sprintf("no complete SSH handshake within %s (TCP connected; peer sent nothing or stalled)", HandshakeTimeout)
+	case errors.Is(err, io.EOF):
+		return "peer closed the connection before the SSH handshake finished"
+	default:
+		return err.Error()
+	}
+}
+
+func suppressedNote(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (+%d similar suppressed)", n)
+}
+
 type session struct {
 	sconn   *ssh.ServerConn
 	allowed map[uint32]bool
@@ -128,9 +150,30 @@ type session struct {
 func handleConn(c net.Conn, sconf *ssh.ServerConfig, reg *monitor.Registry, mgr *sessionManager, store *monitor.TrafficStore) {
 	// Bound the handshake so scanners / half-open connections don't accumulate.
 	_ = c.SetReadDeadline(time.Now().Add(HandshakeTimeout))
+	began := time.Now()
 	sconn, chans, reqs, err := ssh.NewServerConn(c, sconf)
 	if err != nil {
-		return // handshake/auth failure (includes scans)
+		// Handshake/auth failure (includes scans). Recorded and logged so that
+		// "connections arrive but never complete" is distinguishable from
+		// "nothing arrives at all" (the two look the same from the client).
+		ip, _, _ := net.SplitHostPort(c.RemoteAddr().String())
+		known := reg.ClientAt(ip)
+		// A connection that closes at once without a handshake is what a
+		// client's pre-flight probe or a TCP port check looks like: counted as
+		// "seen" but neither kept nor logged.
+		trivial := errors.Is(err, io.EOF) && time.Since(began) < 2*time.Second
+		msg := describeHandshakeErr(err) // before Record: it reads HandshakeTimeout
+		logIt, n := reg.Attempts().Record(ip, known, time.Since(began), errors.New(msg), known != "", trivial)
+		if logIt {
+			who := "unknown IP"
+			if known != "" {
+				who = "known client " + known
+			}
+			log.Printf("tunnelserver: handshake failed from %s (%s) after %s: %s%s",
+				c.RemoteAddr(), who, time.Since(began).Round(time.Millisecond),
+				msg, suppressedNote(n))
+		}
+		return
 	}
 	_ = c.SetReadDeadline(time.Time{}) // clear: tunnels are long-lived
 	defer sconn.Close()
@@ -146,6 +189,7 @@ func handleConn(c net.Conn, sconf *ssh.ServerConfig, reg *monitor.Registry, mgr 
 	}
 	name := s.name
 	ip, _, _ := net.SplitHostPort(sconn.RemoteAddr().String())
+	reg.Attempts().Record(ip, name, time.Since(began), nil, false, false)
 	reg.Add(s.id, &monitor.Client{Name: name, IP: ip, Since: time.Now()})
 	defer reg.Del(s.id)
 	log.Printf("tunnelserver: client %s (%s) authenticated (ports %v)",
