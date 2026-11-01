@@ -23,6 +23,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/adriansanchis87/tunnelkit/internal/config"
+	"github.com/adriansanchis87/tunnelkit/internal/heartbeat"
 	"github.com/adriansanchis87/tunnelkit/internal/monitor"
 )
 
@@ -92,6 +93,27 @@ func Run(cfg *config.Config) error {
 			}
 		}()
 		log.Printf("tunnelserver: web panel on %s", cfg.ServerMonitorAddr)
+	}
+
+	if cfg.ServerUDPAddr != "" {
+		hb := heartbeat.NewServer(cfg.HeartbeatKey)
+		if cfg.HeartbeatKey == "" {
+			log.Printf("heartbeat: WARNING no TK_UDP_KEY set, heartbeats are not authenticated")
+		}
+		hb.OnLost = func(name, ip string, ago time.Duration) {
+			log.Printf("heartbeat: UDP from %s (%s) silent for %s; TCP tunnel connected: %v",
+				name, ip, ago.Round(time.Second), reg.Connected(name))
+		}
+		hb.OnResume = func(name, ip string, gap time.Duration) {
+			log.Printf("heartbeat: UDP from %s (%s) back after %s; TCP tunnel connected: %v",
+				name, ip, gap.Round(time.Second), reg.Connected(name))
+		}
+		reg.SetHeartbeat(hb.Last)
+		go func() {
+			if err := hb.Serve(cfg.ServerUDPAddr); err != nil {
+				log.Printf("heartbeat: %v", err)
+			}
+		}()
 	}
 
 	ln, err := net.Listen("tcp", cfg.ServerSSHAddr)

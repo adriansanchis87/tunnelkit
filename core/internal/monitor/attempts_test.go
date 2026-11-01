@@ -68,3 +68,17 @@ func TestRegistryClientAt(t *testing.T) {
 		t.Fatal("LastIP/ClientAt wrong")
 	}
 }
+
+func TestUDPDiagnosis(t *testing.T) {
+	if got := udpDiagnosis(nil, ""); !strings.Contains(got, "no UDP heartbeat") {
+		t.Fatal(got)
+	}
+	a := 8.0
+	if got := udpDiagnosis(&a, "1.2.3.4"); !strings.Contains(got, "ALIVE") {
+		t.Fatal(got)
+	}
+	b := 600.0
+	if got := udpDiagnosis(&b, "1.2.3.4"); !strings.Contains(got, "not reaching") {
+		t.Fatal(got)
+	}
+}

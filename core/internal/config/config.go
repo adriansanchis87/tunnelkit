@@ -31,6 +31,14 @@ type Config struct {
 	// when other_ssh_options use a Proxy*.
 	NoPrecheck bool
 
+	// --- UDP heartbeat (client sends, server echoes; see package heartbeat) ---
+	// The client runs it when HeartbeatPort > 0 and HeartbeatName is set; it
+	// goes to Host:HeartbeatPort. The key is shared by clients and server.
+	HeartbeatPort     int
+	HeartbeatName     string // this client's name as the server knows it (tk-<site>-<role>)
+	HeartbeatKey      string
+	HeartbeatInterval time.Duration
+
 	// --- stats ---
 	StatsAddr        string // where the client serves /metrics (":9100")
 	StatsForwardPort int    // remote port to expose /metrics to the ingress (0=off)
@@ -49,6 +57,7 @@ type Config struct {
 	ServerHostKey        string // host key file (created if it does not exist)
 	ServerAuthorizedKeys string // authorized_keys with permitlisten
 	ServerMonitorAddr    string // web panel (empty = off, e.g. ":9090")
+	ServerUDPAddr        string // UDP heartbeat echo (empty = off, e.g. ":2223")
 	ServerTrafficFile    string // per-port/per-day traffic persistence
 	// ServerLinks maps a client ROLE to the subdomain label of its main web
 	// service, for clients named "tk-<site>-<role>". Format:
@@ -71,6 +80,7 @@ func defaults() *Config {
 		ServerAliveInterval:  20,
 		ServerAliveCountMax:  3,
 		ReconnectDelay:       5 * time.Second,
+		HeartbeatInterval:    10 * time.Second,
 		SSHImpl:              "openssh",
 		SSHCommand:           "ssh",
 		StatsAddr:            ":9100",
@@ -94,6 +104,9 @@ type haOptions struct {
 	ServerAliveCountMax  *int     `json:"server_alive_count_max"`
 	ExtraSSHOpts         *string  `json:"other_ssh_options"`
 	StatsForwardPort     *int     `json:"stats_forward_port"`
+	UDPPort              *int     `json:"udp_heartbeat_port"`
+	UDPName              *string  `json:"udp_heartbeat_name"`
+	UDPKey               *string  `json:"udp_heartbeat_key"`
 	SpeedtestForwardPort *int     `json:"speedtest_forward_port"`
 }
 
@@ -139,6 +152,15 @@ func (c *Config) applyOptionsFile() {
 	if o.ExtraSSHOpts != nil {
 		c.ExtraSSHOpts = *o.ExtraSSHOpts
 	}
+	if o.UDPPort != nil {
+		c.HeartbeatPort = *o.UDPPort
+	}
+	if o.UDPName != nil {
+		c.HeartbeatName = *o.UDPName
+	}
+	if o.UDPKey != nil {
+		c.HeartbeatKey = *o.UDPKey
+	}
 	if o.StatsForwardPort != nil {
 		c.StatsForwardPort = *o.StatsForwardPort
 	}
@@ -163,6 +185,15 @@ func (c *Config) applyEnv() {
 	if v := os.Getenv("TK_NO_PRECHECK"); v != "" && v != "0" && !strings.EqualFold(v, "false") {
 		c.NoPrecheck = true
 	}
+	setInt(&c.HeartbeatPort, "TK_UDP_PORT")
+	setStr(&c.HeartbeatName, "TK_UDP_NAME")
+	setStr(&c.HeartbeatKey, "TK_UDP_KEY")
+	if v := os.Getenv("TK_UDP_INTERVAL"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.HeartbeatInterval = time.Duration(n) * time.Second
+		}
+	}
+	setStr(&c.ServerUDPAddr, "TK_SERVER_UDP_ADDR")
 	setStr(&c.StatsAddr, "TK_STATS_ADDR")
 	setInt(&c.StatsForwardPort, "TK_STATS_FORWARD_PORT")
 	setStr(&c.SpeedtestListen, "TK_SPEEDTEST_LISTEN")

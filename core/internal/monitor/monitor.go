@@ -62,6 +62,7 @@ type Registry struct {
 	m      map[string]*Client
 	lastIP map[string]string // client name -> IP of its last connection
 	att    *Attempts
+	hb     func(name string) (time.Time, string, bool) // UDP heartbeat lookup (nil = none)
 }
 
 func NewRegistry() *Registry {
@@ -75,6 +76,34 @@ func (r *Registry) Add(id string, c *Client) {
 		r.lastIP[c.Name] = c.IP
 	}
 	r.mu.Unlock()
+}
+
+// SetHeartbeat plugs the UDP heartbeat source: it returns when and from which
+// IP the client's last heartbeat arrived.
+func (r *Registry) SetHeartbeat(f func(name string) (time.Time, string, bool)) {
+	r.mu.Lock()
+	r.hb = f
+	r.mu.Unlock()
+}
+
+// Connected reports whether the named client has a TCP tunnel up right now.
+func (r *Registry) Connected(name string) bool { return r.byName(name) != nil }
+
+// heartbeat returns seconds since the client's last UDP heartbeat (nil when the
+// source is off or none was ever received) and the IP it came from.
+func (r *Registry) heartbeat(name string) (*float64, string) {
+	r.mu.Lock()
+	f := r.hb
+	r.mu.Unlock()
+	if f == nil {
+		return nil, ""
+	}
+	at, ip, ok := f(name)
+	if !ok {
+		return nil, ""
+	}
+	ago := time.Since(at).Seconds()
+	return &ago, ip
 }
 
 // Attempts is the record of connections that reached the server but failed.
@@ -240,6 +269,11 @@ type row struct {
 	LastAttemptError string   `json:"last_attempt_error,omitempty"`
 	FailedAttempts   int      `json:"failed_attempts,omitempty"`
 	Diagnosis        string   `json:"diagnosis,omitempty"`
+	// UDP heartbeat (set on connected and offline rows when the client has ever
+	// sent one): seconds since the last beat and the IP it came from. Compare
+	// with Connected: TCP down + beats fresh = only TCP is broken on the path.
+	UDPSecondsAgo *float64 `json:"udp_seconds_ago,omitempty"`
+	UDPIP         string   `json:"udp_ip,omitempty"`
 }
 
 // link is one web entry point of a client. Kind is "main" (the client's own
@@ -412,6 +446,7 @@ func Serve(addr string, reg *Registry, store *TrafficStore, links LinkConfig) er
 				r.Uptime24h = store.uptimePct(c.Name, 86400)
 			}
 			r.Links = links.linksFor(c.Name, known)
+			r.UDPSecondsAgo, r.UDPIP = reg.heartbeat(c.Name)
 			rows = append(rows, r)
 			connected[c.Name] = true
 		}
@@ -444,6 +479,8 @@ func Serve(addr string, reg *Registry, store *TrafficStore, links LinkConfig) er
 				if ago >= 0 {
 					orow.LastAttemptAgo = &ago
 				}
+				orow.UDPSecondsAgo, orow.UDPIP = reg.heartbeat(name)
+				orow.Diagnosis += udpDiagnosis(orow.UDPSecondsAgo, orow.UDPIP)
 				rows = append(rows, orow)
 			}
 		}
@@ -575,4 +612,17 @@ func mainPort(c *Client) uint32 {
 		}
 	}
 	return m
+}
+
+// udpDiagnosis completes an offline client's diagnosis with what the UDP
+// heartbeat says. It states facts: fresh beats mean UDP reaches the server.
+func udpDiagnosis(ago *float64, ip string) string {
+	if ago == nil {
+		return "; no UDP heartbeat from this client (not configured, or none arrived since the server started)"
+	}
+	if *ago < 35 {
+		return fmt.Sprintf("; UDP heartbeat is ALIVE (last %.0fs ago from %s): UDP reaches the server while the TCP tunnel is down", *ago, ip)
+	}
+	return fmt.Sprintf("; UDP heartbeat also silent for %s (last from %s): UDP is not reaching the server either",
+		(time.Duration(*ago) * time.Second).Round(time.Second), ip)
 }

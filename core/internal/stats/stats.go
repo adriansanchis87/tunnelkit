@@ -23,6 +23,13 @@ type Stats struct {
 
 	// The real traffic is counted on the SERVER (which pipes the whole tunnel);
 	// here they stay at 0. The speedtest port is published for the panel.
+	// UDP heartbeat (see package heartbeat); udpSet false = not configured.
+	udpSet  bool
+	udpOK   bool
+	udpRTT  time.Duration
+	udpLoss float64
+	udpAt   time.Time
+
 	bytesTx       uint64
 	bytesRx       uint64
 	speedtestPort int
@@ -64,6 +71,13 @@ func (s *Stats) RecordDisconnect(d time.Duration, err error) {
 	}
 }
 
+// SetUDP records the latest state of the UDP heartbeat path.
+func (s *Stats) SetUDP(ok bool, rtt time.Duration, lossPct float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.udpSet, s.udpOK, s.udpRTT, s.udpLoss, s.udpAt = true, ok, rtt, lossPct, time.Now()
+}
+
 type snapshot struct {
 	Connected     bool    `json:"connected"`
 	UptimeSeconds float64 `json:"uptime_seconds"` // current session
@@ -74,6 +88,10 @@ type snapshot struct {
 	BytesTx       uint64  `json:"bytes_tx"`
 	BytesRx       uint64  `json:"bytes_rx"`
 	SpeedtestPort int     `json:"speedtest_port"`
+	// Only present when the UDP heartbeat is configured.
+	UDPOK      *bool    `json:"udp_ok,omitempty"`
+	UDPRTTMs   *float64 `json:"udp_rtt_ms,omitempty"`
+	UDPLossPct *float64 `json:"udp_loss_pct,omitempty"`
 }
 
 func (s *Stats) snap() snapshot {
@@ -83,7 +101,7 @@ func (s *Stats) snap() snapshot {
 	if s.connected {
 		up = time.Since(s.sessionAt).Seconds()
 	}
-	return snapshot{
+	sn := snapshot{
 		Connected:     s.connected,
 		UptimeSeconds: up,
 		AgentSeconds:  time.Since(s.startedAt).Seconds(),
@@ -94,6 +112,11 @@ func (s *Stats) snap() snapshot {
 		BytesRx:       s.bytesRx,
 		SpeedtestPort: s.speedtestPort,
 	}
+	if s.udpSet {
+		ok, rtt, loss := s.udpOK, float64(s.udpRTT.Microseconds())/1000, s.udpLoss
+		sn.UDPOK, sn.UDPRTTMs, sn.UDPLossPct = &ok, &rtt, &loss
+	}
+	return sn
 }
 
 // Serve starts the metrics HTTP server (blocking).

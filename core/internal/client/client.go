@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/adriansanchis87/tunnelkit/internal/config"
+	"github.com/adriansanchis87/tunnelkit/internal/heartbeat"
 	"github.com/adriansanchis87/tunnelkit/internal/speedtest"
 	"github.com/adriansanchis87/tunnelkit/internal/stats"
 )
@@ -54,6 +55,14 @@ func Run(cfg *config.Config) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	if cfg.HeartbeatPort > 0 {
+		if cfg.HeartbeatName == "" {
+			log.Printf("heartbeat: TK_UDP_PORT is set but TK_UDP_NAME is empty, UDP heartbeat disabled")
+		} else {
+			go heartbeat.RunClient(ctx, cfg.Host, cfg.HeartbeatPort, cfg.HeartbeatName, cfg.HeartbeatKey, cfg.HeartbeatInterval, st)
+		}
+	}
 
 	precheck := !cfg.NoPrecheck && !strings.Contains(strings.ToLower(cfg.ExtraSSHOpts), "proxy")
 	for ctx.Err() == nil {

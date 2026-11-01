@@ -237,6 +237,33 @@ its forwarded port:
 docker exec tunnelkit-server tunnelkit-server speedtest --speedtest-addr localhost:8047
 ```
 
+### UDP heartbeat: is only TCP broken?
+
+When a tunnel drops, the SSH session cannot tell you whether the whole path to
+the server is dead or only TCP is (a middlebox, a TCP accelerator on a satellite
+link...). The optional UDP heartbeat answers that. Each client sends a small
+UDP packet every 10 s; the server echoes it and remembers the last one per
+client. `/api/status` then shows, for every client, `udp_seconds_ago` and
+`udp_ip` next to the TCP state, and offline rows get a sentence in `diagnosis`
+such as *"UDP heartbeat is ALIVE (last 8s ago ...): UDP reaches the server while
+the TCP tunnel is down"*. The server logs when a client's heartbeats stop or
+resume together with whether its TCP tunnel is up.
+
+It is a diagnostic, not a second tunnel, and it does not use any other VPN.
+
+| Side | Variable | Meaning |
+|---|---|---|
+| server | `TK_SERVER_UDP_ADDR` | UDP listen address (`:2223`); empty = off. Publish it (`2223:2223/udp`) |
+| both | `TK_UDP_KEY` | shared key; packets are HMAC-signed, bad ones get no reply |
+| client | `TK_UDP_PORT` | server UDP port (`2223`); 0 = off |
+| client | `TK_UDP_NAME` | the name the server knows the client by (`tk-<site>-<role>`) |
+| client | `TK_UDP_INTERVAL` | seconds between beats (default 10) |
+
+Packets are fixed-size and the reply is as long as the request (no
+amplification). The client reports `udp_ok`, `udp_rtt_ms` and `udp_loss_pct` in
+`/metrics`. HA add-on options: `udp_heartbeat_port`, `udp_heartbeat_name`,
+`udp_heartbeat_key`.
+
 ### Monitor panel
 
 When `TK_SERVER_MONITOR_ADDR` is set, the server serves a web UI at that address
