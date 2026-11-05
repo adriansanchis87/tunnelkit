@@ -27,7 +27,8 @@ import (
 	"github.com/adriansanchis87/tunnelkit/internal/monitor"
 )
 
-// Tunables (package vars so tests can shorten them).
+// Tunables (kept in a mutex-guarded struct so tests can shorten them while
+// goroutines of earlier sessions are still reading them).
 //
 // KeepaliveInterval: the server probes each connected client with
 // keepalive@openssh.com; if a probe fails, the session is closed and its
@@ -50,12 +51,43 @@ import (
 //
 // HandshakeTimeout: a deadline for the SSH handshake so scanners / half-open
 // connections cannot pile up.
+type tunables struct {
+	KeepaliveInterval time.Duration
+	KeepaliveTimeout  time.Duration
+	EvictWait         time.Duration
+	HandshakeTimeout  time.Duration
+}
+
 var (
-	KeepaliveInterval = 20 * time.Second
-	KeepaliveTimeout  = 30 * time.Second
-	EvictWait         = 5 * time.Second
-	HandshakeTimeout  = 15 * time.Second
+	tunMu sync.RWMutex
+	tun   = tunables{
+		KeepaliveInterval: 20 * time.Second,
+		KeepaliveTimeout:  30 * time.Second,
+		EvictWait:         5 * time.Second,
+		HandshakeTimeout:  15 * time.Second,
+	}
 )
+
+// getTunables returns a consistent snapshot of the tunables.
+func getTunables() tunables {
+	tunMu.RLock()
+	defer tunMu.RUnlock()
+	return tun
+}
+
+// setTunables applies f to the tunables and returns a func restoring the
+// previous values. For tests.
+func setTunables(f func(*tunables)) (restore func()) {
+	tunMu.Lock()
+	defer tunMu.Unlock()
+	old := tun
+	f(&tun)
+	return func() {
+		tunMu.Lock()
+		defer tunMu.Unlock()
+		tun = old
+	}
+}
 
 // Run starts the SSH tunnel server (blocking).
 func Run(cfg *config.Config) error {
@@ -142,7 +174,7 @@ func describeHandshakeErr(err error) string {
 	var ne net.Error
 	switch {
 	case errors.As(err, &ne) && ne.Timeout():
-		return fmt.Sprintf("no complete SSH handshake within %s (TCP connected; peer sent nothing or stalled)", HandshakeTimeout)
+		return fmt.Sprintf("no complete SSH handshake within %s (TCP connected; peer sent nothing or stalled)", getTunables().HandshakeTimeout)
 	case errors.Is(err, io.EOF):
 		return "peer closed the connection before the SSH handshake finished"
 	default:
@@ -171,7 +203,7 @@ type session struct {
 
 func handleConn(c net.Conn, sconf *ssh.ServerConfig, reg *monitor.Registry, mgr *sessionManager, store *monitor.TrafficStore) {
 	// Bound the handshake so scanners / half-open connections don't accumulate.
-	_ = c.SetReadDeadline(time.Now().Add(HandshakeTimeout))
+	_ = c.SetReadDeadline(time.Now().Add(getTunables().HandshakeTimeout))
 	began := time.Now()
 	sconn, chans, reqs, err := ssh.NewServerConn(c, sconf)
 	if err != nil {
@@ -252,7 +284,7 @@ func handleConn(c net.Conn, sconf *ssh.ServerConfig, reg *monitor.Registry, mgr 
 // probe closes the connection, which ends the request loop and frees the
 // listeners.
 func (s *session) keepalive() {
-	t := time.NewTicker(KeepaliveInterval)
+	t := time.NewTicker(getTunables().KeepaliveInterval)
 	defer t.Stop()
 	for {
 		select {
@@ -276,14 +308,15 @@ func (s *session) probe() bool {
 		_, _, err := s.sconn.SendRequest("keepalive@openssh.com", true, nil)
 		res <- err
 	}()
-	timer := time.NewTimer(KeepaliveTimeout)
+	kt := getTunables().KeepaliveTimeout
+	timer := time.NewTimer(kt)
 	defer timer.Stop()
 	select {
 	case err := <-res:
 		return err == nil
 	case <-timer.C:
 		log.Printf("tunnelserver: %s (%s) keepalive unanswered for %s, closing session",
-			s.name, s.sconn.RemoteAddr(), KeepaliveTimeout)
+			s.name, s.sconn.RemoteAddr(), kt)
 		return false
 	case <-s.done:
 		return true // session already ending; keepalive() exits on its next select
@@ -449,10 +482,11 @@ func (m *sessionManager) register(s *session) {
 	}
 	log.Printf("tunnelserver: %s reconnected, evicting stale session %s", s.name, old.id)
 	old.sconn.Close() // ends its request loop -> closeAll frees the listeners
+	ew := getTunables().EvictWait
 	select {
 	case <-old.done:
-	case <-time.After(EvictWait):
-		log.Printf("tunnelserver: stale session %s did not release ports within %s", old.id, EvictWait)
+	case <-time.After(ew):
+		log.Printf("tunnelserver: stale session %s did not release ports within %s", old.id, ew)
 	}
 }
 

@@ -120,6 +120,25 @@ sequenceDiagram
   Init-->>Panel: down / up Mbps, aggregated
 ```
 
+## Releases and image verification
+
+Releases are tagged `vX.Y.Z`. Each one publishes `tunnelkit-client` and
+`tunnelkit-server` images tagged `X.Y.Z`, `X.Y` and `latest`, plus the OpenWrt
+client binaries and a `SHA256SUMS` file on the GitHub release. In production,
+pin an exact `X.Y.Z` tag (`main` publishes `edge`, which moves on every push).
+
+Images are signed with [cosign](https://github.com/sigstore/cosign) (keyless,
+from this repository's workflow) and carry an SBOM and build provenance:
+
+```bash
+cosign verify ghcr.io/adriansanchis87/tunnelkit-server:X.Y.Z \
+  --certificate-identity-regexp '^https://github.com/adriansanchis87/tunnelkit/\.github/workflows/build\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+docker buildx imagetools inspect ghcr.io/adriansanchis87/tunnelkit-server:X.Y.Z \
+  --format '{{ json .SBOM }}'
+```
+
 ## Usage
 
 All examples use placeholder values: a server reachable at `example.com`, an SSH
