@@ -17,6 +17,6 @@ services:
       - ./data:/data
     ports:
       - "2223:2223"
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"   # panel has no auth of its own: keep it on loopback or behind an authenticating proxy
     # The speedtest initiator lives in the same image:
     #   docker exec tunnelkit-server tunnelkit-server speedtest --speedtest-addr localhost:8047

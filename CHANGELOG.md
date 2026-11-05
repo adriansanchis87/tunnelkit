@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `docs/`: getting started, operations, key rotation and troubleshooting guides;
+  `SECURITY.md` and `CONTRIBUTING.md`. Diagnostics sections moved out of the README.
 - Server pinning: new client option `host_key` (`TK_HOST_KEY`, `--host-key`,
   add-on and UCI option). The client refuses any other server key, with OpenSSH
   and Dropbear. The server prints the value to use at startup. Empty keeps the
@@ -18,6 +20,7 @@ All notable changes to this project are documented here. The format follows
 - Dependabot for Go modules, base images and GitHub Actions.
 
 ### Changed
+- The example server compose file publishes the monitor panel on `127.0.0.1` only.
 - `main` now publishes the `edge` image tag; `latest` only moves on releases.
 - Home Assistant add-on renamed to **TunnelKit Client**, slug changed from
   `autossh_plus` to `tunnelkit_client` and directory to `tunnelkit-client/`.
