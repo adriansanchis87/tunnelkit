@@ -35,6 +35,7 @@ options:
   server_alive_interval: 20
   server_alive_count_max: 3
   other_ssh_options: ""
+  host_key: ""
   stats_forward_port: 0
   speedtest_forward_port: 0
 schema:
@@ -47,5 +48,6 @@ schema:
   server_alive_interval: int(5,300)
   server_alive_count_max: int(1,10)
   other_ssh_options: str?
+  host_key: str?
   stats_forward_port: int(0,65535)
   speedtest_forward_port: int(0,65535)

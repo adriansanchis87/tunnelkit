@@ -22,10 +22,15 @@ type Config struct {
 	Forwards            []string // remote "-R" forwards: "8060:localhost:80"
 	ServerAliveInterval int
 	ServerAliveCountMax int
-	ExtraSSHOpts        string        // extra ssh options, space-separated
-	ReconnectDelay      time.Duration // wait between retries
-	SSHImpl             string        // "openssh" (default) or "dropbear" (OpenWrt)
-	SSHCommand          string        // ssh binary to use (default "ssh")
+	// HostKey pins the server: its public key line ("ssh-ed25519 AAAA...", as
+	// printed by the server at startup). When set, the client refuses any other
+	// host key instead of trusting the first one it sees. Empty = trust on
+	// first use (previous behaviour).
+	HostKey        string
+	ExtraSSHOpts   string        // extra ssh options, space-separated
+	ReconnectDelay time.Duration // wait between retries
+	SSHImpl        string        // "openssh" (default) or "dropbear" (OpenWrt)
+	SSHCommand     string        // ssh binary to use (default "ssh")
 	// NoPrecheck disables the pre-flight probe (TCP connect + SSH banner) the
 	// client runs before each ssh attempt (TK_NO_PRECHECK=1). Skipped anyway
 	// when other_ssh_options use a Proxy*.
@@ -103,6 +108,7 @@ type haOptions struct {
 	ServerAliveInterval  *int     `json:"server_alive_interval"`
 	ServerAliveCountMax  *int     `json:"server_alive_count_max"`
 	ExtraSSHOpts         *string  `json:"other_ssh_options"`
+	HostKey              *string  `json:"host_key"`
 	StatsForwardPort     *int     `json:"stats_forward_port"`
 	UDPPort              *int     `json:"udp_heartbeat_port"`
 	UDPName              *string  `json:"udp_heartbeat_name"`
@@ -152,6 +158,9 @@ func (c *Config) applyOptionsFile() {
 	if o.ExtraSSHOpts != nil {
 		c.ExtraSSHOpts = *o.ExtraSSHOpts
 	}
+	if o.HostKey != nil {
+		c.HostKey = *o.HostKey
+	}
 	if o.UDPPort != nil {
 		c.HeartbeatPort = *o.UDPPort
 	}
@@ -180,6 +189,7 @@ func (c *Config) applyEnv() {
 	setInt(&c.ServerAliveInterval, "TK_SERVER_ALIVE_INTERVAL")
 	setInt(&c.ServerAliveCountMax, "TK_SERVER_ALIVE_COUNT_MAX")
 	setStr(&c.ExtraSSHOpts, "TK_EXTRA_SSH_OPTS")
+	setStr(&c.HostKey, "TK_HOST_KEY")
 	setStr(&c.SSHImpl, "TK_SSH_IMPL")
 	setStr(&c.SSHCommand, "TK_SSH_COMMAND")
 	if v := os.Getenv("TK_NO_PRECHECK"); v != "" && v != "0" && !strings.EqualFold(v, "false") {
@@ -218,6 +228,7 @@ func (c *Config) applyFlags(args []string) {
 	sai := fs.Int("alive-interval", c.ServerAliveInterval, "ServerAliveInterval")
 	sacm := fs.Int("alive-count", c.ServerAliveCountMax, "ServerAliveCountMax")
 	extra := fs.String("ssh-opts", c.ExtraSSHOpts, "extra ssh options")
+	hostKey := fs.String("host-key", c.HostKey, "pin the server: its public key line (ssh-ed25519 AAAA...)")
 	sshImpl := fs.String("ssh-impl", c.SSHImpl, "openssh | dropbear (OpenWrt)")
 	sshCmd := fs.String("ssh-command", c.SSHCommand, "ssh binary to use")
 	statsAddr := fs.String("stats-addr", c.StatsAddr, "addr for /metrics")
@@ -241,6 +252,7 @@ func (c *Config) applyFlags(args []string) {
 	}
 	c.ServerAliveInterval, c.ServerAliveCountMax = *sai, *sacm
 	c.ExtraSSHOpts = *extra
+	c.HostKey = *hostKey
 	c.SSHImpl, c.SSHCommand = *sshImpl, *sshCmd
 	c.StatsAddr, c.StatsForwardPort = *statsAddr, *statsFwd
 	c.SpeedtestListen, c.SpeedtestForwardPort = *stListen, *stFwd

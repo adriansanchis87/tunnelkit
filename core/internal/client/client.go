@@ -36,6 +36,22 @@ func Run(cfg *config.Config) error {
 	if cfg.Host == "" {
 		return fmt.Errorf("missing ingress host (--host / TK_HOST / options.json)")
 	}
+	var pin *pinned
+	if cfg.HostKey != "" {
+		k, err := parseHostKey(cfg.HostKey)
+		if err != nil {
+			return fmt.Errorf("host_key: %w", err)
+		}
+		dir, path, cleanup, err := writeKnownHosts(k, cfg.Host, cfg.SSHPort, cfg.SSHImpl == "dropbear")
+		if err != nil {
+			return fmt.Errorf("host_key: %w", err)
+		}
+		defer cleanup()
+		pin = &pinned{dir: dir, knownHosts: path}
+		log.Printf("tunnelkit: server pinned to %s %s; any other host key is refused", k.typ, k.hash)
+	} else {
+		log.Printf("tunnelkit: no host_key set: the server key is trusted on first use (set host_key to pin it)")
+	}
 	st := stats.New(cfg.SpeedtestForwardPort)
 	if cfg.StatsAddr != "" {
 		go func() {
@@ -81,7 +97,7 @@ func Run(cfg *config.Config) error {
 			}
 		}
 		start := time.Now()
-		cmd := buildSSH(ctx, cfg)
+		cmd := buildSSH(ctx, cfg, pin)
 		log.Printf("tunnelkit: connecting to %s@%s:%d", cfg.User, cfg.Host, cfg.SSHPort)
 
 		if err := cmd.Start(); err != nil {
@@ -110,14 +126,19 @@ func Run(cfg *config.Config) error {
 }
 
 // buildSSH builds the ssh -N -R ... command (openssh or dropbear).
-func buildSSH(ctx context.Context, cfg *config.Config) *exec.Cmd {
+func buildSSH(ctx context.Context, cfg *config.Config, pin *pinned) *exec.Cmd {
 	var args []string
 	if cfg.SSHImpl == "dropbear" {
-		args = dropbearArgs(cfg)
+		args = dropbearArgs(cfg, pin)
 	} else {
-		args = opensshArgs(cfg)
+		args = opensshArgs(cfg, pin)
 	}
 	cmd := exec.CommandContext(ctx, cfg.SSHCommand, args...)
+	if pin != nil && cfg.SSHImpl == "dropbear" {
+		// dbclient reads $HOME/.ssh/known_hosts and has no option to point at
+		// another file, so give it a private HOME that holds only the pinned key.
+		cmd.Env = append(os.Environ(), "HOME="+pin.dir)
+	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd
@@ -138,16 +159,29 @@ func forwards(cfg *config.Config) []string {
 	return r
 }
 
-func opensshArgs(cfg *config.Config) []string {
+// pinned holds the temp HOME and known_hosts file with the pinned server key.
+type pinned struct{ dir, knownHosts string }
+
+func opensshArgs(cfg *config.Config, pin *pinned) []string {
+	// Pinned: only the configured key is accepted (no TOFU, no global file).
+	// Unpinned: trust on first use, as before.
+	strict := []string{"-o", "StrictHostKeyChecking=accept-new"}
+	if pin != nil {
+		strict = []string{
+			"-o", "StrictHostKeyChecking=yes",
+			"-o", "UserKnownHostsFile=" + pin.knownHosts,
+			"-o", "GlobalKnownHostsFile=/dev/null",
+		}
+	}
 	args := []string{
 		"-N", "-T",
 		"-o", "ExitOnForwardFailure=yes",
 		"-o", "ConnectTimeout=" + strconv.Itoa(connectTimeout),
-		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "ServerAliveInterval=" + strconv.Itoa(cfg.ServerAliveInterval),
 		"-o", "ServerAliveCountMax=" + strconv.Itoa(cfg.ServerAliveCountMax),
 		"-p", strconv.Itoa(cfg.SSHPort),
 	}
+	args = append(args, strict...)
 	if cfg.KeyFile != "" {
 		args = append(args, "-i", cfg.KeyFile)
 	}
@@ -159,10 +193,14 @@ func opensshArgs(cfg *config.Config) []string {
 }
 
 // dropbearArgs builds the arguments for dbclient (Dropbear, OpenWrt):
-// -y accepts the host key, -K sets keepalive. There is no ExitOnForwardFailure
-// (the supervisor retries on exit anyway).
-func dropbearArgs(cfg *config.Config) []string {
-	args := []string{"-N", "-T", "-y", "-p", strconv.Itoa(cfg.SSHPort)}
+// -y accepts an unknown host key (only when not pinned: with a pinned key in
+// known_hosts, dbclient refuses any other), -K sets keepalive. There is no
+// ExitOnForwardFailure (the supervisor retries on exit anyway).
+func dropbearArgs(cfg *config.Config, pin *pinned) []string {
+	args := []string{"-N", "-T", "-p", strconv.Itoa(cfg.SSHPort)}
+	if pin == nil {
+		args = append(args, "-y")
+	}
 	if cfg.KeyFile != "" {
 		args = append(args, "-i", cfg.KeyFile)
 	}
