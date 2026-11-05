@@ -144,9 +144,7 @@ func probe(t *testing.T, serverAddr string, port uint32) string {
 // drop the server hasn't noticed yet), the new session evicts the old one and
 // takes over the same forwarded port, instead of failing the forward.
 func TestEvictionReclaimsPort(t *testing.T) {
-	old := EvictWait
-	EvictWait = 2 * time.Second
-	defer func() { EvictWait = old }()
+	defer setTunables(func(c *tunables) { c.EvictWait = 2 * time.Second })()
 
 	key := newSigner(t)
 	port := freePort(t)
@@ -169,7 +167,7 @@ func TestEvictionReclaimsPort(t *testing.T) {
 	c2, _ := dialClient(t, addr, key)
 	var l2 net.Listener
 	// The reconnect path evicts client1 and waits up to EvictWait; retry briefly.
-	deadline := time.Now().Add(EvictWait + time.Second)
+	deadline := time.Now().Add(2*time.Second + time.Second)
 	for time.Now().Before(deadline) {
 		l2, err = c2.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
 		if err == nil {
@@ -222,9 +220,7 @@ func TestCleanDisconnectFreesPort(t *testing.T) {
 // TestServerSendsKeepalive verifies the server probes the client with
 // keepalive@openssh.com (the mechanism that detects dead links and frees ports).
 func TestServerSendsKeepalive(t *testing.T) {
-	oldKA := KeepaliveInterval
-	KeepaliveInterval = 100 * time.Millisecond
-	defer func() { KeepaliveInterval = oldKA }()
+	defer setTunables(func(c *tunables) { c.KeepaliveInterval = 100 * time.Millisecond })()
 
 	key := newSigner(t)
 	addr, stop := startTestServer(t, key.PublicKey(), "tk-test")
@@ -279,9 +275,9 @@ func TestServerSendsKeepalive(t *testing.T) {
 // up (~15 min) and the forwarded port stays bound; with it the session is
 // closed and the port freed after KeepaliveTimeout.
 func TestUnansweredKeepaliveClosesSession(t *testing.T) {
-	oldKA, oldTO := KeepaliveInterval, KeepaliveTimeout
-	KeepaliveInterval, KeepaliveTimeout = 50*time.Millisecond, 200*time.Millisecond
-	defer func() { KeepaliveInterval, KeepaliveTimeout = oldKA, oldTO }()
+	defer setTunables(func(c *tunables) {
+		c.KeepaliveInterval, c.KeepaliveTimeout = 50*time.Millisecond, 200*time.Millisecond
+	})()
 
 	key := newSigner(t)
 	port := freePort(t)
@@ -349,9 +345,9 @@ func TestUnansweredKeepaliveClosesSession(t *testing.T) {
 // aggressive: a client that replies must stay connected well past
 // KeepaliveTimeout.
 func TestAnsweredKeepaliveKeepsSession(t *testing.T) {
-	oldKA, oldTO := KeepaliveInterval, KeepaliveTimeout
-	KeepaliveInterval, KeepaliveTimeout = 50*time.Millisecond, 200*time.Millisecond
-	defer func() { KeepaliveInterval, KeepaliveTimeout = oldKA, oldTO }()
+	defer setTunables(func(c *tunables) {
+		c.KeepaliveInterval, c.KeepaliveTimeout = 50*time.Millisecond, 200*time.Millisecond
+	})()
 
 	key := newSigner(t)
 	addr, stop := startTestServer(t, key.PublicKey(), "tk-test")
@@ -359,7 +355,7 @@ func TestAnsweredKeepaliveKeepsSession(t *testing.T) {
 
 	c, _ := dialClient(t, addr, key) // ssh.Client replies to global requests
 	defer c.Close()
-	time.Sleep(4 * KeepaliveTimeout)
+	time.Sleep(4 * 200 * time.Millisecond)
 	if _, _, err := c.SendRequest("ping", true, nil); err != nil {
 		t.Fatalf("healthy session was closed: %v", err)
 	}
@@ -384,9 +380,7 @@ func TestForwardNotAllowed(t *testing.T) {
 // A connection that opens but never completes the handshake (the failure seen
 // through the satellite link) must be recorded and described, not vanish.
 func TestStalledHandshakeIsRecorded(t *testing.T) {
-	old := HandshakeTimeout
-	HandshakeTimeout = 300 * time.Millisecond
-	defer func() { HandshakeTimeout = old }()
+	defer setTunables(func(c *tunables) { c.HandshakeTimeout = 300 * time.Millisecond })()
 
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
 	host, err := ssh.NewSignerFromKey(priv)
