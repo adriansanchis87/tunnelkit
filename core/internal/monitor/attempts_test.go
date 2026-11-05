@@ -18,18 +18,18 @@ func TestAttemptsDiagnose(t *testing.T) {
 	}
 
 	// Two failed handshakes arrive.
-	a.Record("1.2.3.4", "tk-x-ha", 15*time.Second, errors.New("no complete SSH handshake"), true, false)
-	a.Record("1.2.3.4", "tk-x-ha", 15*time.Second, errors.New("no complete SSH handshake"), true, false)
+	a.Record("1.2.3.4", "tk-x-web", 15*time.Second, errors.New("no complete SSH handshake"), true, false)
+	a.Record("1.2.3.4", "tk-x-web", 15*time.Second, errors.New("no complete SSH handshake"), true, false)
 	txt, ago, lerr, fails := a.Diagnose("1.2.3.4", down)
 	if fails != 2 || ago < 0 || lerr == "" || !strings.Contains(txt, "reached the server and failed") {
 		t.Fatalf("failing diagnosis wrong: %q ago=%v fails=%d", txt, ago, fails)
 	}
-	if got := a.Recent(10); len(got) != 2 || got[0].Client != "tk-x-ha" {
+	if got := a.Recent(10); len(got) != 2 || got[0].Client != "tk-x-web" {
 		t.Fatalf("recent = %+v", got)
 	}
 
 	// Success resets the failures.
-	a.Record("1.2.3.4", "tk-x-ha", time.Second, nil, false, false)
+	a.Record("1.2.3.4", "tk-x-web", time.Second, nil, false, false)
 	if txt, _, _, fails = a.Diagnose("1.2.3.4", down); fails != 0 || !strings.Contains(txt, "connected again") {
 		t.Fatalf("after success: %q fails=%d", txt, fails)
 	}
@@ -52,19 +52,19 @@ func TestAttemptsTrivialAndRateLimit(t *testing.T) {
 		}
 	}
 	// ...but a known client is always logged, and reports the suppressed count.
-	if logIt, n := a.Record("8.8.8.8", "tk-y-ha", time.Second, errors.New("x"), true, false); !logIt || n != 3 {
+	if logIt, n := a.Record("8.8.8.8", "tk-y-web", time.Second, errors.New("x"), true, false); !logIt || n != 3 {
 		t.Fatalf("known client: logIt=%v suppressed=%d", logIt, n)
 	}
 }
 
 func TestRegistryClientAt(t *testing.T) {
 	r := NewRegistry()
-	r.Add("a", &Client{Name: "tk-c-ha", IP: "5.5.5.5"})
-	r.Add("b", &Client{Name: "tk-c-router", IP: "5.5.5.5"})
-	if got := r.ClientAt("5.5.5.5"); got != "tk-c-ha/tk-c-router" {
+	r.Add("a", &Client{Name: "tk-c-web", IP: "5.5.5.5"})
+	r.Add("b", &Client{Name: "tk-c-ssh", IP: "5.5.5.5"})
+	if got := r.ClientAt("5.5.5.5"); got != "tk-c-ssh/tk-c-web" {
 		t.Fatalf("ClientAt = %q", got)
 	}
-	if r.LastIP("tk-c-ha") != "5.5.5.5" || r.ClientAt("6.6.6.6") != "" {
+	if r.LastIP("tk-c-web") != "5.5.5.5" || r.ClientAt("6.6.6.6") != "" {
 		t.Fatal("LastIP/ClientAt wrong")
 	}
 }

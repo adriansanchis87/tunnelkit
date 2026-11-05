@@ -1,6 +1,6 @@
 // Package client keeps the reverse SSH tunnel to the ingress alive.
 //
-// It does what autossh does, but better for our case: reconnection driven by
+// It does what autossh does, but more robustly: reconnection driven by
 // ssh's real exit signal (not a monitor port the server rejects),
 // ExitOnForwardFailure so no half-open tunnels are left behind, sane keepalives,
 // and a /metrics endpoint the ingress can scrape over a forwarded port.

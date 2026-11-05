@@ -1,4 +1,4 @@
-# Autossh Plus
+# TunnelKit Client
 
 A robust reverse SSH tunnel to your server, with `/metrics` and a speedtest.
 
@@ -7,7 +7,7 @@ A robust reverse SSH tunnel to your server, with `/metrics` and a speedtest.
 - **ssh_port**: the server's SSH port (default 2222).
 - **username**: the SSH user (`tunnel`).
 - **key_file**: path to the private key (put it in `/ssl/` or `/config/`).
-- **remote_forwarding**: list of `-R` forwards, e.g. `8060:localhost:8123`.
+- **remote_forwarding**: list of `-R` forwards, e.g. `8060:localhost:80`.
 - **server_alive_interval / server_alive_count_max**: client keepalive.
 - **other_ssh_options**: extra ssh options (optional).
 - **stats_forward_port**: remote port that exposes `/metrics` to the server (0 = off).

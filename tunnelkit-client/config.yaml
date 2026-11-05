@@ -2,9 +2,9 @@
 # Uses the image pre-built by CI (image:), so it does NOT compile on the device
 # and it is the SAME image as the Docker one. The first time you push, the
 # workflow publishes the images to GHCR and the add-on can be installed.
-name: Autossh Plus
+name: TunnelKit Client
 version: "0.1.0"
-slug: autossh_plus
+slug: tunnelkit_client
 description: Robust reverse SSH tunnel to your server, with /metrics and speedtest
 url: https://github.com/adriansanchis87/tunnelkit
 image: ghcr.io/adriansanchis87/tunnelkit-client
@@ -31,7 +31,7 @@ options:
   username: tunnel
   key_file: /ssl/id_tunnel
   remote_forwarding:
-    - "8060:localhost:8123"
+    - "8060:localhost:80"
   server_alive_interval: 20
   server_alive_count_max: 3
   other_ssh_options: ""
