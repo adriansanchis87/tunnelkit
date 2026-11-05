@@ -19,7 +19,7 @@ type Config struct {
 	SSHPort             int      // ingress SSH port
 	User                string   // SSH user (e.g. "tunnel")
 	KeyFile             string   // private key
-	Forwards            []string // remote "-R" forwards: "8060:localhost:8123"
+	Forwards            []string // remote "-R" forwards: "8060:localhost:80"
 	ServerAliveInterval int
 	ServerAliveCountMax int
 	ExtraSSHOpts        string        // extra ssh options, space-separated
@@ -62,7 +62,7 @@ type Config struct {
 	// ServerLinks maps a client ROLE to the subdomain label of its main web
 	// service, for clients named "tk-<site>-<role>". Format:
 	// "role=template,role=template" with {site} and {role} placeholders, e.g.
-	// "ha=ha{site},router=ha{site}-router". Empty = the panel shows no links
+	// "web=web{site},ssh=ssh{site}". Empty = the panel shows no links
 	// and the monitor does no host-based reverse proxying.
 	ServerLinks string
 	// ServerLinkBackupSuffix, when set (e.g. "-b"), adds a "backup" link per

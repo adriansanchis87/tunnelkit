@@ -15,7 +15,7 @@ image** and an **OpenWrt package**. Everything lives in one monorepo.
 ```
 tunnelkit/
 ├── core/          Go code: cmd/client and cmd/server + shared internal/
-├── autossh-plus/  Home Assistant add-on (uses the CI image via image:)
+├── tunnelkit-client/  Home Assistant add-on (uses the CI image via image:)
 ├── docker/        plain image + compose (client)
 ├── openwrt/       Makefile (.ipk) + procd init + uci
 ├── server/        server side: tunnel server + speedtest + web monitor
@@ -90,7 +90,7 @@ sequenceDiagram
   Note over Srv: opens listener on :8080<br/>only if allowed by permitlisten
   User->>Srv: TCP connect :8080
   Srv->>Cli: forwarded-tcpip channel
-  Cli->>Svc: TCP connect :8123
+  Cli->>Svc: TCP connect :80
   Svc-->>User: bytes flow both ways through the tunnel
 ```
 
@@ -127,7 +127,7 @@ login `tunnel`, and a tunnel SSH port `2223`.
 
 ### Client (Docker)
 
-Run the client and forward a local service (e.g. Home Assistant on `:8123`) to
+Run the client and forward a local service (e.g. a web app on `:80`) to
 port `8080` on the server:
 
 ```bash
@@ -139,14 +139,14 @@ docker run -d --name tunnelkit-client \
   -e TK_SSH_PORT=2223 \
   -e TK_USER=tunnel \
   -e TK_KEY_FILE=/keys/id_ed25519 \
-  -e TK_FORWARDS="8080:localhost:8123" \
+  -e TK_FORWARDS="8080:localhost:80" \
   -e TK_STATS_FORWARD_PORT=8048 \
   -e TK_SPEEDTEST_FORWARD_PORT=8047 \
   ghcr.io/adriansanchis87/tunnelkit-client:latest
 ```
 
 `TK_FORWARDS` is comma-separated for multiple `-R` forwards, e.g.
-`"8080:localhost:8123,8081:localhost:80"`. `TK_STATS_FORWARD_PORT` exposes the
+`"8080:localhost:80,8081:localhost:80"`. `TK_STATS_FORWARD_PORT` exposes the
 client's `/metrics` to the server (0 = off) and `TK_SPEEDTEST_FORWARD_PORT`
 exposes the speedtest responder (0 = off).
 
@@ -158,7 +158,7 @@ The same thing with the raw binary:
 tunnelkit client \
   --host example.com --ssh-port 2223 --user tunnel \
   --key ~/.ssh/id_ed25519 \
-  --forwards 8080:localhost:8123 \
+  --forwards 8080:localhost:80 \
   --stats-forward 8048 --speedtest-forward 8047
 ```
 
@@ -183,15 +183,15 @@ Key settings (see `server/docker-compose.yml`):
   clients named `tk-<site>-<role>`. A `role=template` list with `{site}` /
   `{role}` placeholders, giving the **subdomain label** of that client's main
   service under the panel's own domain. Example:
-  `TK_SERVER_LINKS="ha=ha{site},router=ha{site}-router"` links `tk-home-ha`
-  to `hahome.<panel domain>` and `tk-home-router` to
-  `hahome-router.<panel domain>`. Requests arriving at the monitor with that
+  `TK_SERVER_LINKS="web=web{site},ssh=ssh{site}"` links `tk-home-web`
+  to `webhome.<panel domain>` and `tk-home-ssh` to
+  `sshhome.<panel domain>`. Requests arriving at the monitor with that
   host label are reverse-proxied to the client's lowest forwarded port. Empty
   (default) = no links, no host-based proxying.
 - `TK_SERVER_LINK_BACKUP_SUFFIX` (optional, e.g. `-b`) — also offer, for each
   client, a **backup** link to the sibling client of the same site (other
   role) reached through this one, at `<sibling label><suffix>`. Useful when
-  two devices at a site (e.g. a Home Assistant box and its router) forward
+  two devices at a site (e.g. an application server and its router) forward
   each other's SSH/web as a fallback.
 
 The `/data` volume holds `host_key`, `authorized_keys` and `traffic.json`.
@@ -308,10 +308,10 @@ Prebuilt static binaries per architecture are attached to each GitHub release.
 ### Home Assistant add-on
 
 In Home Assistant go to Settings → Add-ons → Store → ⋮ → Repositories and paste
-this repo's URL. The **Autossh Plus** add-on appears; install it and set the
+this repo's URL. The **TunnelKit Client** add-on appears; install it and set the
 options (host, username, key file, remote forwarding, etc.) from the add-on
 configuration tab. It runs with `boot: auto` and a watchdog, so the Supervisor
-restarts it if it dies. See `autossh-plus/DOCS.md` for the full option list.
+restarts it if it dies. See `tunnelkit-client/DOCS.md` for the full option list.
 
 ## Server side
 

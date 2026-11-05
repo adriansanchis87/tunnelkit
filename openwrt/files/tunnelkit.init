@@ -1,7 +1,7 @@
 #!/bin/sh /etc/rc.common
-# procd init para tunnelkit en OpenWrt, con auto-descarga del binario para
-# routers de flash minuscula (binario en /tmp/RAM, se rebaja en cada arranque
-# desde option binary_url). respawn = procd lo revive si muere.
+# procd init script for tunnelkit on OpenWrt, with automatic binary download
+# for tiny-flash routers (binary kept in /tmp/RAM and re-fetched on every boot
+# from option binary_url). respawn = procd restarts it if it dies.
 USE_PROCD=1
 START=95
 STOP=10
