@@ -91,7 +91,7 @@ jobs:
           # Supply chain: an SBOM and SLSA provenance attached to the image.
           sbom: true
           provenance: mode=max
-      - uses: sigstore/cosign-installer@v3.7.0
+      - uses: sigstore/cosign-installer@v4.1.2
         if: env.PUBLISH == 'true'
       - name: sign (by digest, keyless)
         if: env.PUBLISH == 'true'
