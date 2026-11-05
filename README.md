@@ -220,6 +220,8 @@ Key settings (see `server/docker-compose.yml`):
 - `TK_SERVER_AUTHORIZED_KEYS=/data/authorized_keys` — allowed public keys.
 - `TK_SERVER_TRAFFIC_FILE=/data/traffic.json` — per-port/per-day traffic
   persistence.
+- `TK_SERVER_CLIENTS=/data/clients.json` (optional) — titles, port names and
+  expected URLs shown in the panel; see [Naming clients and ports](#naming-clients-and-ports).
 - `TK_SERVER_LINKS` (optional) — web links the panel shows per client, for
   clients named `tk-<site>-<role>`. A `role=template` list with `{site}` /
   `{role}` placeholders, giving the **subdomain label** of that client's main
@@ -243,6 +245,41 @@ See [docs/troubleshooting.md](docs/troubleshooting.md): why a client will not
 connect (`/api/status` diagnosis, handshake failures, the client's pre-flight
 probe), the optional UDP heartbeat that tells a broken TCP path from a dead link,
 and how the server frees ports after dirty client drops.
+
+### Naming clients and ports
+
+By default the panel shows each client by its key comment (`tk-site1-web`) and its
+ports as bare numbers. An optional `clients.json` next to `authorized_keys` gives
+them readable names and, optionally, the URL each service is expected to answer on:
+
+```json
+{
+  "tk-site1-web": {
+    "title": "Site 1 - web server",
+    "ports": {
+      "8080": { "name": "Web UI", "url": "https://web.site1.example.com" },
+      "8048": { "name": "Metrics" }
+    }
+  }
+}
+```
+
+- `title` replaces the client name in the table (the technical name stays visible
+  under it). `ports` maps a port number to a `name` and an optional `url`.
+- It is presentation only: **access control stays in `authorized_keys`**. A port not
+  listed here is still shown, by number.
+- The file is re-read when it changes. A syntax error keeps the previous contents
+  and is logged; invalid entries (bad port, non-`http(s)/tcp/ssh` URL, over-long
+  text) are ignored and logged once.
+- Clicking **ON** on a client row opens a dialog with its ports: name, expected URL
+  (clickable when it is `http` or `https`) and a **Test** button. Test checks the
+  port *through the tunnel*, from the server: with an `http(s)` URL it requests that
+  URL (Host header and TLS name taken from the URL, certificate not verified) and
+  reports the HTTP status and latency; without one it opens a TCP connection and
+  tells apart "service up", "held open waiting for the client to speak" and "the
+  tunnel closed it at once, so the client cannot reach its local service". Only
+  ports the client currently forwards can be tested, and each port at most once a
+  second.
 
 ### Monitor panel
 

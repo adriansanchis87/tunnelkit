@@ -64,6 +64,7 @@ type Config struct {
 	ServerMonitorAddr    string // web panel (empty = off, e.g. ":9090")
 	ServerUDPAddr        string // UDP heartbeat echo (empty = off, e.g. ":2223")
 	ServerTrafficFile    string // per-port/per-day traffic persistence
+	ServerClientsFile    string // optional clients.json: titles, port names, expected URLs (empty = off)
 	// ServerLinks maps a client ROLE to the subdomain label of its main web
 	// service, for clients named "tk-<site>-<role>". Format:
 	// "role=template,role=template" with {site} and {role} placeholders, e.g.
@@ -95,6 +96,7 @@ func defaults() *Config {
 		ServerHostKey:        "/data/tunnelkit_host_key",
 		ServerAuthorizedKeys: "/data/authorized_keys",
 		ServerTrafficFile:    "/data/traffic.json",
+		ServerClientsFile:    "/data/clients.json",
 	}
 }
 
@@ -214,6 +216,7 @@ func (c *Config) applyEnv() {
 	setStr(&c.ServerAuthorizedKeys, "TK_SERVER_AUTHORIZED_KEYS")
 	setStr(&c.ServerMonitorAddr, "TK_SERVER_MONITOR_ADDR")
 	setStr(&c.ServerTrafficFile, "TK_SERVER_TRAFFIC_FILE")
+	setStr(&c.ServerClientsFile, "TK_SERVER_CLIENTS")
 	setStr(&c.ServerLinks, "TK_SERVER_LINKS")
 	setStr(&c.ServerLinkBackupSuffix, "TK_SERVER_LINK_BACKUP_SUFFIX")
 }

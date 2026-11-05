@@ -8,6 +8,7 @@ Everything lives in the `/data` volume:
 |---|---|---|
 | `host_key` | the server's SSH identity (private) | every client with a pinned `host_key` refuses the server until you update it; unpinned clients with a stored known_hosts refuse it too |
 | `authorized_keys` | allowed client keys and their ports | no client can connect until you recreate it |
+| `clients.json` | optional titles, port names and expected URLs for the panel | only the friendly names are lost |
 | `traffic.json` | per-port / per-day traffic history | only the history is lost |
 
 ### Backups
@@ -16,7 +17,7 @@ Everything lives in the `/data` volume:
 without touching every client. Back it up and keep the backup private.
 
 ```bash
-tar czf tunnelkit-backup-$(date +%F).tgz -C data host_key authorized_keys traffic.json
+tar czf tunnelkit-backup-$(date +%F).tgz -C data host_key authorized_keys traffic.json clients.json   # drop clients.json if you do not use it
 chmod 600 tunnelkit-backup-*.tgz
 # encrypt it before it leaves the host, e.g. gpg -c / age
 ```
@@ -46,8 +47,9 @@ that editors which replace the file are seen by the container.
 ## Exposing the monitor panel
 
 The panel and its API (`/api/status`, `/api/traffic`, `/api/uptime`,
-`/api/speedtest`) have **no authentication of their own**, and the speedtest
-endpoint generates load. Treat `TK_SERVER_MONITOR_ADDR` as an internal port:
+`/api/probe`, `/api/speedtest`) have **no authentication of their own**, and the
+speedtest endpoint generates load (the probe is rate-limited and can only reach
+ports a connected client forwards). Treat `TK_SERVER_MONITOR_ADDR` as an internal port:
 
 - Publish it on loopback only (`"127.0.0.1:9090:9090"`) or keep it on the private
   Docker network.

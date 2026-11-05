@@ -7,6 +7,13 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Readable names in the panel: optional `clients.json` (`TK_SERVER_CLIENTS`) with a
+  client `title`, a `name` per port and an optional expected `url`. The **ON**
+  dialog now lists the client's ports and has a **Test** button that checks each
+  port through the tunnel (HTTP request to the expected URL, or a TCP check that
+  tells "service down behind the tunnel" from "service up"). New endpoint
+  `/api/probe`; `/api/status` rows gain `title` and `port_info`.
+- Panel text coming from the operator is now HTML-escaped.
 - `docs/`: getting started, operations, key rotation and troubleshooting guides;
   `SECURITY.md` and `CONTRIBUTING.md`. Diagnostics sections moved out of the README.
 - Server pinning: new client option `host_key` (`TK_HOST_KEY`, `--host-key`,

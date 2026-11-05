@@ -56,6 +56,12 @@ function fmtR(n){if(!n)return '0';const u=['','K','M','G'];let i=0;n*=8;
   while(n>=1000&&i<3){n/=1000;i++;}return n.toFixed(i?1:0)+u[i]+'bps';}
 function fmtB(n){if(!n)return '0 B';const u=['B','KB','MB','GB','TB'];let i=0;
   while(n>=1024&&i<4){n/=1024;i++;}return n.toFixed(i?1:0)+' '+u[i];}
+// Everything that comes from the operator (names, titles, URLs) goes through
+// esc() before it is put in HTML; A() makes a name safe inside an onclick attribute.
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(ch){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];});}
+function A(s){return esc(JSON.stringify(String(s)));}
+function T(name){const c=LAST[name];return esc((c&&c.title)||name);}
+function safeHref(u){return /^https?:\/\//i.test(u||'')?u:'';}
 // Links come from the server (/api/status "links", built from TK_SERVER_LINKS):
 // each is a subdomain label, completed here with the panel's own parent domain.
 function linkUrl(host){var p=location.host.split('.');if(p.length<2||!host)return '';return location.protocol+'//'+host+'.'+p.slice(1).join('.');}
@@ -74,7 +80,7 @@ async function openTraffic(name){
   const dlg=document.getElementById('dlg'),c=document.getElementById('dlgc');
   c.innerHTML='loading…';dlg.showModal();
   try{const d=await (await fetch('/api/traffic?client='+encodeURIComponent(name))).json();
-    let h='<h3>'+name+' — traffic by port</h3><table><tr><th>Port</th><th>↓ received</th><th>↑ sent</th></tr>';
+    let h='<h3>'+T(name)+' — traffic by port</h3><table><tr><th>Port</th><th>↓ received</th><th>↑ sent</th></tr>';
     (d.ports||[]).forEach(p=>h+='<tr><td class=mono>'+p.port+'</td><td class=mono>'+fmtB(p.rx)+'</td><td class=mono>'+fmtB(p.tx)+'</td></tr>');
     if(!(d.ports||[]).length)h+='<tr><td colspan=3 class=muted>no data</td></tr>';
     h+='</table><h3>Traffic by day</h3><table><tr><th>Date</th><th>Total</th></tr>';
@@ -97,19 +103,47 @@ function openRec(name){
   for(let i=1;i<h.length;i++){let d=(h[i].rec||0)-(h[i-1].rec||0);if(d<0)d=0;pts.push({t:h[i].ts,d:d});if(d>0){win+=d;lastTs=h[i].ts;}}
   const spanS=h.length>1?(h[h.length-1].ts-h[0].ts):0;
   const perHour=spanS>0?(win*3600/spanS):0;
-  let html='<h3>'+name+' — reconnections</h3>';
+  let html='<h3>'+T(name)+' — reconnections</h3>';
   html+='<div class="mono" style="margin:.3rem 0 .6rem">all-time total: <b>'+(c.reconnects||0)+'</b> · in window ('+fmtU(spanS)+'): <b>'+win+'</b> · ~'+perHour.toFixed(1)+'/h'+(lastTs?' · last drop: '+new Date(lastTs*1000).toLocaleTimeString():' · no drops in window')+'</div>';
   html+=recBars(pts,520,90);
   html+='<div class="muted" style="font-size:.75rem;margin-top:.3rem">each bar = reconnections in that interval (~5s); window ~10 min</div>';
   el.innerHTML=html;dlg.showModal();}
+function portsLine(c){
+  const pi=c.port_info||[];
+  const parts=pi.length?pi.map(p=>(p.name?esc(p.name)+' ':'')+':'+p.port):(c.ports||[]).map(p=>':'+p);
+  return (c.title?esc(c.name)+'<br>':'')+parts.join(' · ');}
+async function probePort(name,port,btn){
+  const out=document.getElementById('pr'+port);
+  btn.disabled=true;out.style.color='var(--muted)';out.textContent='testing…';
+  try{
+    const r=await fetch('/api/probe?client='+encodeURIComponent(name)+'&port='+port,{cache:'no-store'});
+    if(!r.ok){out.style.color='var(--warn)';out.textContent=(await r.text()).trim();}
+    else{const d=await r.json();
+      out.style.color=d.level==='ok'?'var(--up)':(d.level==='warn'?'var(--warn)':'var(--down)');
+      out.textContent=d.message+(d.latency_ms?' · '+d.latency_ms.toFixed(0)+' ms':'');}
+  }catch(e){out.style.color='var(--down)';out.textContent='error: '+e;}
+  btn.disabled=false;}
 function openLinks(name){
   const dlg=document.getElementById('dlg'),el=document.getElementById('dlgc');
-  const c=LAST[name]||{};let html='<h3>'+name+' — tunnel links</h3>';
-  const rows=(c.links||[]).map(l=>[l.kind,l.label,linkUrl(l.host)]).filter(x=>x[2]);
-  if(!rows.length)html+='<div class="muted">no web links (set TK_SERVER_LINKS on the server)</div>';
-  else{html+='<table><tr><th></th><th>target</th><th>link</th></tr>';
-    rows.forEach(x=>{html+='<tr><td>'+x[0]+'</td><td class="mono">'+x[1]+'</td><td><a class="svc" href="'+x[2]+'" target="_blank" rel="noopener">'+x[2].replace(/^https?:\/\//,'')+'</a></td></tr>';});
+  const c=LAST[name]||{};
+  let html='<h3>'+T(name)+' — tunnel</h3>';
+  if(c.title)html+='<div class="mono muted" style="margin:-.2rem 0 .5rem">'+esc(name)+'</div>';
+  const pi=c.port_info||[];
+  if(pi.length){
+    html+='<table><tr><th>Port</th><th>Service</th><th>Expected URL</th><th>Check</th></tr>';
+    pi.forEach(p=>{
+      const fwd=(c.ports||[]).indexOf(p.port)>=0;
+      const href=safeHref(p.url);
+      const url=!p.url?'<span class="muted">-</span>':(href?'<a class="svc" href="'+esc(href)+'" target="_blank" rel="noopener">'+esc(p.url.replace(/^https?:\/\//i,''))+'</a>':'<span class="mono">'+esc(p.url)+'</span>');
+      const chk=fwd?'<button onclick="probePort('+A(name)+','+p.port+',this)">Test</button> <span id="pr'+p.port+'" class="mono"></span>':'<span class="muted">not forwarded now</span>';
+      html+='<tr><td class="mono">'+p.port+'</td><td>'+(p.name?esc(p.name):'<span class="muted">-</span>')+'</td><td>'+url+'</td><td style="white-space:normal">'+chk+'</td></tr>';});
     html+='</table>';}
+  const rows=(c.links||[]).map(l=>[l.kind,l.label,linkUrl(l.host)]).filter(x=>x[2]);
+  if(rows.length){
+    html+='<h3>Web links</h3><table><tr><th></th><th>target</th><th>link</th></tr>';
+    rows.forEach(x=>{html+='<tr><td>'+esc(x[0])+'</td><td class="mono">'+esc(x[1])+'</td><td><a class="svc" href="'+esc(x[2])+'" target="_blank" rel="noopener">'+esc(x[2].replace(/^https?:\/\//,''))+'</a></td></tr>';});
+    html+='</table>';}
+  if(!pi.length&&!rows.length)html+='<div class="muted">nothing to show: no forwarded ports and no web links (see clients.json and TK_SERVER_LINKS)</div>';
   el.innerHTML=html;dlg.showModal();}
 function upCompute(events,from,to){
   const span=to-from;
@@ -130,7 +164,7 @@ function upColor(p){return p>=99.5?'var(--up)':(p>=95?'var(--warn)':'var(--down)
 function upCell(c){const p=c.uptime_24h;
   if(p==null||p<0)return '<span class="muted">—</span>';
   const txt=(p>=99.95?p.toFixed(0):p.toFixed(1))+'%';
-  return '<button class="link mono" style="color:'+upColor(p)+'" onclick="openUptime(\''+c.name+'\')" title="availability 24h/7d">'+txt+'</button>';}
+  return '<button class="link mono" style="color:'+upColor(p)+'" onclick="openUptime('+A(c.name)+')" title="availability 24h/7d">'+txt+'</button>';}
 async function openUptime(name){
   const dlg=document.getElementById('dlg'),el=document.getElementById('dlgc');
   el.innerHTML='loading…';dlg.showModal();
@@ -139,7 +173,7 @@ async function openUptime(name){
     function block(label,win){const r=upCompute(ev,now-win,now);
       const pct=r.pct==null?'no data':r.pct.toFixed(2)+'%';
       return '<div style="margin:.2rem 0 .7rem"><div class="mono" style="margin-bottom:.25rem">'+label+' · availability <b style="color:'+(r.pct==null?'var(--muted)':upColor(r.pct))+'">'+pct+'</b></div>'+upBarSvg(r.segs,560,22)+'</div>';}
-    let h='<h3 style="margin-bottom:.4rem">'+name+' — availability</h3>';
+    let h='<h3 style="margin-bottom:.4rem">'+T(name)+' — availability</h3>';
     h+=block('Last 24 h',86400)+block('Last 7 days',7*86400);
     h+='<div class="muted" style="font-size:.72rem">green = connected · red = down · grey = no data</div>';
     el.innerHTML=h;
@@ -157,25 +191,26 @@ async function tick(){try{
     '<span class="pill">'+fmtB(cs.reduce((a,c)=>a+(c.traffic_today||0),0))+' today</span>'+
     '<span class="pill">'+on.reduce((a,c)=>a+(c.reconnects||0),0)+' reconnections</span>';
   const offHtml=off.map(c=>{
-    return '<tr class="offline"><td><b>'+c.name+'</b></td>'+
+    return '<tr class="offline"><td><b>'+esc(c.title||c.name)+'</b>'+(c.title?'<br><span class="mono muted" style="font-size:.75rem">'+esc(c.name)+'</span>':'')+'</td>'+
       '<td><span class="badge down"><span class="dot"></span>OFF</span></td><td class="mono">-</td>'+
       '<td class="mono" title="time disconnected">offline '+fmtU(c.offline_seconds)+'</td><td class="mono">-</td>'+
       '<td class="mono">-</td><td class="mono">-</td>'+
       '<td class="mono">'+fmtB(c.traffic_today||0)+'</td><td class="mono">-</td><td>'+upCell(c)+'</td></tr>';
   }).join('');
   document.getElementById('rows').innerHTML=(on.map(c=>{
-    const rc='<button class="link mono'+((c.reconnects||0)>=5?' hi':'')+'" onclick="openRec(\''+c.name+'\')" title="drops over time">'+(c.reconnects||0)+((c.reconnects||0)>=5?' ⚠':'')+'</button>';
+    const rc='<button class="link mono'+((c.reconnects||0)>=5?' hi':'')+'" onclick="openRec('+A(c.name)+')" title="drops over time">'+(c.reconnects||0)+((c.reconnects||0)>=5?' ⚠':'')+'</button>';
     const h=c.hist||[];const rx=h.map(s=>s.rx),tx=h.map(s=>s.tx);
     const traf='<div class="spark"><div>'+spark(rx,60,20,'var(--rx)')+spark(tx,60,10,'var(--tx)')+'</div>'+
-      '<button class="link mono" onclick="openTraffic(\''+c.name+'\')" title="view by port/day">'+fmtB(c.traffic_today)+'</button></div>';
+      '<button class="link mono" onclick="openTraffic('+A(c.name)+')" title="view by port/day">'+fmtB(c.traffic_today)+'</button></div>';
     let sp='<span class="muted">—</span>';
-    if(c.speedtest){sp='<div class="spark"><button onclick="speed(\''+c.name+'\',this)">Measure</button>'+
+    if(c.speedtest){sp='<div class="spark"><button onclick="speed('+A(c.name)+',this)">Measure</button>'+
       '<span class="res mono muted">'+(c.last_down?c.last_down.toFixed(1)+'↓ '+c.last_up.toFixed(1)+'↑':'')+'</span>'+
       spark(c.speed_hist,50,20,'var(--accent)')+'</div>';}
     const _u=mainUrl(c);
-    const nm=_u?'<a class="svc" href="'+_u+'" target="_blank" rel="noopener" title="open main web">'+c.name+'</a>':'<b>'+c.name+'</b>';
-    return '<tr><td>'+nm+'<br><span class="mono muted" style="font-size:.75rem">'+(c.ports||[]).join(' ')+'</span></td>'+
-      '<td><button class="badge up linkbadge" onclick="openLinks(\''+c.name+'\')" title="tunnel links (main + backup)"><span class="dot"></span>ON</button></td><td class="mono">'+(c.ip||'-')+'</td>'+
+    const _t=esc(c.title||c.name);
+    const nm=_u?'<a class="svc" href="'+esc(_u)+'" target="_blank" rel="noopener" title="open main web">'+_t+'</a>':'<b>'+_t+'</b>';
+    return '<tr><td>'+nm+'<br><span class="mono muted" style="font-size:.75rem">'+portsLine(c)+'</span></td>'+
+      '<td><button class="badge up linkbadge" onclick="openLinks('+A(c.name)+')" title="tunnel links (main + backup)"><span class="dot"></span>ON</button></td><td class="mono">'+(c.ip||'-')+'</td>'+
       '<td class="mono">'+fmtU(c.uptime_seconds)+'</td><td class="mono">'+(c.active||0)+'</td>'+
       '<td>'+rc+'</td><td class="mono muted">'+(c.latency_ms?c.latency_ms.toFixed(0)+' ms':'-')+'</td>'+
       '<td>'+traf+'</td><td>'+sp+'</td><td>'+upCell(c)+'</td></tr>';
