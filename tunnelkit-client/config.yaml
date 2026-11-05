@@ -4,7 +4,7 @@
 # workflow publishes the images to GHCR and the add-on can be installed.
 name: TunnelKit Client
 version: "0.1.0"
-slug: autossh_plus   # kept for upgrade compatibility with existing installs
+slug: tunnelkit_client
 description: Robust reverse SSH tunnel to your server, with /metrics and speedtest
 url: https://github.com/adriansanchis87/tunnelkit
 image: ghcr.io/adriansanchis87/tunnelkit-client
