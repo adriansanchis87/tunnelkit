@@ -8,7 +8,7 @@ STOP=10
 
 start_service() {
 	config_load tunnelkit
-	local host port user key forwards saint sacnt statsfwd stfwd impl sshcmd bin binurl
+	local host port user key forwards saint sacnt statsfwd stfwd impl sshcmd bin binurl hostkey
 	config_get host     main host
 	config_get port     main ssh_port 2222
 	config_get user     main username tunnel
@@ -26,6 +26,7 @@ start_service() {
 	fi
 	config_get bin      main binary /usr/bin/tunnelkit-client
 	config_get binurl   main binary_url
+	config_get hostkey  main host_key
 
 	[ -z "$host" ] && { echo "tunnelkit: missing 'host' in /etc/config/tunnelkit"; return 1; }
 
@@ -40,7 +41,8 @@ start_service() {
 		--host "$host" --ssh-port "$port" --user "$user" --key "$key" \
 		--forwards "$forwards" --alive-interval "$saint" \
 		--alive-count "$sacnt" --stats-forward "$statsfwd" \
-		--speedtest-forward "$stfwd" --ssh-impl "$impl" --ssh-command "$sshcmd"
+		--speedtest-forward "$stfwd" --ssh-impl "$impl" --ssh-command "$sshcmd" \
+		--host-key "$hostkey"
 	procd_set_param respawn
 	procd_set_param stdout 1
 	procd_set_param stderr 1

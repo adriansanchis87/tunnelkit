@@ -101,6 +101,8 @@ func Run(cfg *config.Config) error {
 	}
 	log.Printf("tunnelserver: %d authorized keys, host key %s",
 		len(auth.keys), ssh.FingerprintSHA256(hostKey.PublicKey()))
+	log.Printf("tunnelserver: to pin this server on clients set TK_HOST_KEY=%q (add-on/UCI option host_key)",
+		strings.TrimSpace(string(ssh.MarshalAuthorizedKey(hostKey.PublicKey()))))
 
 	sconf := &ssh.ServerConfig{
 		PublicKeyCallback: func(_ ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {

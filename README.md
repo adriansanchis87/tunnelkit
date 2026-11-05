@@ -181,6 +181,24 @@ tunnelkit client \
   --stats-forward 8048 --speedtest-forward 8047
 ```
 
+### Pinning the server key (recommended)
+
+By default the client trusts the server's SSH host key the first time it sees it
+(trust on first use). Whoever can intercept that first connection could
+impersonate the server. To prevent it, give the client the server's public key:
+
+1. Start the server and read its startup log:
+   `tunnelserver: to pin this server on clients set TK_HOST_KEY="ssh-ed25519 AAAA..."`
+   (the key is the public part of `host_key`; keep that file safe and backed up,
+   because if it is regenerated every pinned client will refuse the server).
+2. Set it on each client: `TK_HOST_KEY`, `--host-key`, the add-on option
+   `host_key` or the UCI option `host_key`.
+
+With a pinned key, any other key makes the client refuse to connect (OpenSSH:
+`REMOTE HOST IDENTIFICATION HAS CHANGED`; Dropbear: `host key mismatch`) and keep
+retrying; an invalid `host_key` is reported at startup. Works with both SSH
+backends. Leaving it empty keeps the old behaviour.
+
 ### Server
 
 Bring up the tunnel server (embedded Go SSH server, no external ssh daemon).

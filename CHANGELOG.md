@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Server pinning: new client option `host_key` (`TK_HOST_KEY`, `--host-key`,
+  add-on and UCI option). The client refuses any other server key, with OpenSSH
+  and Dropbear. The server prints the value to use at startup. Empty keeps the
+  previous trust-on-first-use behaviour.
 - Release workflow: semver-tagged images (`X.Y.Z`, `X.Y`, `latest`), OpenWrt
   binaries and `SHA256SUMS` attached to each GitHub release.
 - Images are signed with cosign (keyless) and carry an SBOM and SLSA provenance.

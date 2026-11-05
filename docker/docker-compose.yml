@@ -10,6 +10,7 @@ services:
       TK_SSH_PORT: "2223"
       TK_USER: tunnel
       TK_KEY_FILE: /keys/id_ed25519   # the machine's existing SSH key, mounted
+      # TK_HOST_KEY: "ssh-ed25519 AAAA..."  # pin the server (printed by tunnelkit-server at startup)
       TK_FORWARDS: "8040:localhost:80"    # comma-separated for several
       TK_STATS_FORWARD_PORT: "0"            # e.g. 8048 so the server can read /metrics
       TK_SPEEDTEST_FORWARD_PORT: "0"        # e.g. 8047 to measure the tunnel
