@@ -6,7 +6,7 @@ WORKDIR /src/core
 ARG VERSION=dev
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/tunnelkit-server ./cmd/server
 
-FROM alpine:3.20
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates tzdata
 COPY --from=build /out/tunnelkit-server /usr/local/bin/tunnelkit-server
 ENTRYPOINT ["tunnelkit-server"]
