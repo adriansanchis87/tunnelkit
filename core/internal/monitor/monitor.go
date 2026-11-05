@@ -13,6 +13,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -233,24 +234,33 @@ func (c *Client) scrape() {
 
 // --- API ---
 
+// portInfo is one forwarded port with its operator-provided description.
+type portInfo struct {
+	Port uint32 `json:"port"`
+	Name string `json:"name,omitempty"`
+	URL  string `json:"url,omitempty"` // expected URL (http, https, tcp or ssh)
+}
+
 type row struct {
-	Name         string    `json:"name"`
-	Connected    bool      `json:"connected"`
-	IP           string    `json:"ip"`
-	Ports        []uint32  `json:"ports"`
-	Uptime       float64   `json:"uptime_seconds"`
-	Reconnects   int       `json:"reconnects"`
-	Latency      float64   `json:"latency_ms"`
-	Active       int64     `json:"active"`
-	BytesTx      uint64    `json:"bytes_tx"`
-	BytesRx      uint64    `json:"bytes_rx"`
-	LastError    string    `json:"last_error"`
-	Hist         []sample  `json:"hist"`
-	Speedtest    bool      `json:"speedtest"` // responder present
-	LastDown     float64   `json:"last_down"`
-	LastUp       float64   `json:"last_up"`
-	SpeedHist    []float64 `json:"speed_hist"`
-	TrafficToday uint64    `json:"traffic_today"` // today's bytes (tx+rx)
+	Name         string     `json:"name"`
+	Title        string     `json:"title,omitempty"`     // display title from clients.json
+	PortInfo     []portInfo `json:"port_info,omitempty"` // ports with their names / expected URLs
+	Connected    bool       `json:"connected"`
+	IP           string     `json:"ip"`
+	Ports        []uint32   `json:"ports"`
+	Uptime       float64    `json:"uptime_seconds"`
+	Reconnects   int        `json:"reconnects"`
+	Latency      float64    `json:"latency_ms"`
+	Active       int64      `json:"active"`
+	BytesTx      uint64     `json:"bytes_tx"`
+	BytesRx      uint64     `json:"bytes_rx"`
+	LastError    string     `json:"last_error"`
+	Hist         []sample   `json:"hist"`
+	Speedtest    bool       `json:"speedtest"` // responder present
+	LastDown     float64    `json:"last_down"`
+	LastUp       float64    `json:"last_up"`
+	SpeedHist    []float64  `json:"speed_hist"`
+	TrafficToday uint64     `json:"traffic_today"` // today's bytes (tx+rx)
 	// OfflineSeconds is how long a KNOWN client has been disconnected. It is
 	// only set on rows where Connected is false (built from the traffic store's
 	// last-seen record); 0 on connected clients.
@@ -385,8 +395,29 @@ func (c *Client) row() row {
 	}
 }
 
+// describe fills the presentation fields of a row from the metadata store.
+// Every port the client forwards is listed (so unnamed ones still show), plus
+// any described port that is not currently forwarded.
+func describe(r *row, meta *MetaStore) {
+	m := meta.Get(r.Name)
+	r.Title = m.Title
+	seen := map[uint32]bool{}
+	for _, p := range r.Ports {
+		pm := meta.Port(r.Name, p)
+		r.PortInfo = append(r.PortInfo, portInfo{Port: p, Name: pm.Name, URL: pm.URL})
+		seen[p] = true
+	}
+	for k, pm := range m.Ports {
+		var n uint32
+		if _, err := fmt.Sscanf(k, "%d", &n); err == nil && !seen[n] {
+			r.PortInfo = append(r.PortInfo, portInfo{Port: n, Name: pm.Name, URL: pm.URL})
+		}
+	}
+	sort.Slice(r.PortInfo, func(i, j int) bool { return r.PortInfo[i].Port < r.PortInfo[j].Port })
+}
+
 // Serve starts the web panel (blocking) + the background sampler.
-func Serve(addr string, reg *Registry, store *TrafficStore, links LinkConfig) error {
+func Serve(addr string, reg *Registry, store *TrafficStore, links LinkConfig, meta *MetaStore) error {
 	startAt := time.Now()
 	go func() {
 		for range time.Tick(5 * time.Second) {
@@ -446,6 +477,7 @@ func Serve(addr string, reg *Registry, store *TrafficStore, links LinkConfig) er
 				r.Uptime24h = store.uptimePct(c.Name, 86400)
 			}
 			r.Links = links.linksFor(c.Name, known)
+			describe(&r, meta)
 			r.UDPSecondsAgo, r.UDPIP = reg.heartbeat(c.Name)
 			rows = append(rows, r)
 			connected[c.Name] = true
@@ -481,6 +513,7 @@ func Serve(addr string, reg *Registry, store *TrafficStore, links LinkConfig) er
 				}
 				orow.UDPSecondsAgo, orow.UDPIP = reg.heartbeat(name)
 				orow.Diagnosis += udpDiagnosis(orow.UDPSecondsAgo, orow.UDPIP)
+				describe(&orow, meta)
 				rows = append(rows, orow)
 			}
 		}
@@ -511,6 +544,43 @@ func Serve(addr string, reg *Registry, store *TrafficStore, links LinkConfig) er
 			"name": name, "now": time.Now().Unix(),
 			"events": store.uptimeSeries(name),
 		})
+	})
+	// /api/probe?client=NAME&port=N checks one forwarded port through the tunnel
+	// (see probe.go). Only ports the client currently forwards can be probed, so
+	// it cannot be used to reach anything else on the server.
+	gate := newProbeGate(time.Second)
+	mux.HandleFunc("/api/probe", func(w http.ResponseWriter, req *http.Request) {
+		name := req.URL.Query().Get("client")
+		c := reg.byName(name)
+		if c == nil {
+			http.Error(w, "client not connected", http.StatusNotFound)
+			return
+		}
+		port, err := strconv.Atoi(req.URL.Query().Get("port"))
+		if err != nil {
+			http.Error(w, "bad port", http.StatusBadRequest)
+			return
+		}
+		c.mu.Lock()
+		forwarded := false
+		for _, p := range c.ports {
+			if int(p) == port {
+				forwarded = true
+			}
+		}
+		c.mu.Unlock()
+		if !forwarded {
+			http.Error(w, "that port is not forwarded by this client", http.StatusBadRequest)
+			return
+		}
+		if !gate.allow(name + ":" + strconv.Itoa(port)) {
+			http.Error(w, "probed too recently, wait a second", http.StatusTooManyRequests)
+			return
+		}
+		res := probe(fmt.Sprintf("127.0.0.1:%d", port), meta.Port(name, uint32(port)).URL)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(res)
 	})
 	mux.HandleFunc("/api/speedtest", func(w http.ResponseWriter, req *http.Request) {
 		c := reg.byName(req.URL.Query().Get("client"))

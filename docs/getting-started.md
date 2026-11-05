@@ -61,6 +61,25 @@ The file is re-read automatically when it changes; no restart is needed to add a
 client. A port can be bound by only one client at a time, so give every client
 its own ports.
 
+## 3b. Give it a readable name (optional)
+
+Create `data/clients.json` to show a title and port names in the panel, with an
+optional expected URL per port (it enables the **Test** button's HTTP check):
+
+```json
+{
+  "tk-site1-web": {
+    "title": "Site 1 - web server",
+    "ports": {
+      "8080": { "name": "Web UI", "url": "https://web.site1.example.com" },
+      "8048": { "name": "Metrics" }
+    }
+  }
+}
+```
+
+See [Naming clients and ports](../README.md#naming-clients-and-ports).
+
 ## 4. Run the client
 
 ```bash

@@ -122,7 +122,7 @@ func Run(cfg *config.Config) error {
 	if cfg.ServerMonitorAddr != "" {
 		go func() {
 			links := monitor.ParseLinkConfig(cfg.ServerLinks, cfg.ServerLinkBackupSuffix)
-			if err := monitor.Serve(cfg.ServerMonitorAddr, reg, store, links); err != nil {
+			if err := monitor.Serve(cfg.ServerMonitorAddr, reg, store, links, monitor.NewMetaStore(cfg.ServerClientsFile)); err != nil {
 				log.Printf("monitor: %v", err)
 			}
 		}()
