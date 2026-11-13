@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-13
+
+First release with the new release pipeline. Read **Upgrading from 0.1.x** first.
+
+### Upgrading from 0.1.x
+- **Home Assistant add-on:** the slug changed (`autossh_plus` -> `tunnelkit_client`),
+  so Home Assistant sees a different add-on. Save your options, uninstall the old
+  add-on, install **TunnelKit Client** and enter the options again.
+- **Image tags:** releases are now tagged `X.Y.Z` (no `v` prefix, e.g. `0.2.0`),
+  `X.Y` and `latest`. `main` publishes `edge`, and `latest` only moves on releases.
+  Pin an exact version in production.
+- Nothing else changes for existing setups: `host_key`, `clients.json` and the new
+  panel dialog are all optional.
+
 ### Added
 - Readable names in the panel: optional `clients.json` (`TK_SERVER_CLIENTS`) with a
   client `title`, a `name` per port and an optional expected `url`. The **ON**
@@ -34,3 +48,5 @@ All notable changes to this project are documented here. The format follows
   Existing installs must uninstall the old add-on and install the new one;
   options are not carried over.
 - Examples and tests use neutral names; all comments are in English.
+- Dependencies: Go 1.27 and Alpine 3.24 in the images, `golang.org/x/crypto` 0.58.0
+  (`go` directive 1.26), and newer major versions of the GitHub Actions used by CI.
