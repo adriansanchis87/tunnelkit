@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-13
+
+### Fixed
+- **A mistyped or unknown command-line option no longer starts the program.**
+  Before, the flag error was ignored and the client/server carried on with
+  whatever the environment provided: `--hostkey` (instead of `--host-key`) would
+  silently run unpinned, and `--help` started a second tunnel instance. Now an
+  unknown option prints the error and exits with status 2, and `--help` prints the
+  usage and exits with status 0.
+- The panel's **Test** no longer reports a healthy service as failed when the
+  expected URL is `https://` but TLS is terminated by a reverse proxy in front of
+  it (the usual setup: the tunnel carries plain HTTP). It now retries over plain
+  HTTP and says so; a real failure behind it is still reported.
+
 ## [0.2.0] - 2026-11-13
 
 First release with the new release pipeline. Read **Upgrading from 0.1.x** first.

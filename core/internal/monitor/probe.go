@@ -16,6 +16,11 @@ import (
 
 // probeResult is what the "Test" button in the panel shows for one port.
 type probeResult struct {
+	// schemeMismatch is set (not serialised) when an https URL hit a service
+	// that speaks plain HTTP, the usual case when a reverse proxy terminates TLS
+	// in front of the tunnelled service.
+	schemeMismatch bool
+
 	Kind      string  `json:"kind"`  // "http" or "tcp"
 	Level     string  `json:"level"` // "ok", "warn" or "fail"
 	Message   string  `json:"message"`
@@ -40,7 +45,20 @@ const (
 func probe(addr, rawURL string) probeResult {
 	if u, err := url.Parse(rawURL); err == nil && rawURL != "" {
 		if s := strings.ToLower(u.Scheme); s == "http" || s == "https" {
-			return probeHTTP(addr, u)
+			r := probeHTTP(addr, u)
+			if r.schemeMismatch && s == "https" {
+				// The expected URL is the public one (https, TLS ended by a proxy)
+				// but through the tunnel the service speaks plain HTTP: ask it
+				// that way instead of reporting a failure.
+				plain := *u
+				plain.Scheme = "http"
+				r2 := probeHTTP(addr, &plain)
+				if !r2.schemeMismatch {
+					r2.Message = "plain HTTP behind the tunnel (the public https is terminated by a proxy): " + r2.Message
+					return r2
+				}
+			}
+			return r
 		}
 	}
 	return probeTCP(addr)
@@ -71,7 +89,9 @@ func probeHTTP(addr string, u *url.URL) probeResult {
 	resp, err := cl.Do(req)
 	ms := float64(time.Since(start).Microseconds()) / 1000
 	if err != nil {
-		return probeResult{Kind: "http", Level: "fail", LatencyMS: ms, Message: explainErr(err, u.Scheme)}
+		msg := explainErr(err, u.Scheme)
+		return probeResult{Kind: "http", Level: "fail", LatencyMS: ms, Message: msg,
+			schemeMismatch: strings.Contains(msg, "speaks plain HTTP")}
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
