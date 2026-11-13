@@ -75,11 +75,20 @@ func TestProbeHTTPS(t *testing.T) {
 	if r := probe(addrOf(srv), "https://svc.example.com/"); r.Level != "ok" || r.Status != 200 {
 		t.Errorf("https: %+v", r)
 	}
-	// https URL but the service speaks plain HTTP.
+	// The public URL is https but TLS is terminated by a proxy: through the
+	// tunnel the service speaks plain HTTP. That is a healthy service, and the
+	// probe says so instead of failing.
 	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
 	defer plain.Close()
-	if r := probe(addrOf(plain), "https://svc.example.com/"); r.Level != "fail" || !strings.Contains(r.Message, "plain HTTP") {
-		t.Errorf("https vs plain: %+v", r)
+	r := probe(addrOf(plain), "https://svc.example.com/")
+	if r.Level != "ok" || r.Status != 200 || !strings.Contains(r.Message, "plain HTTP behind the tunnel") {
+		t.Errorf("https URL, plain service: %+v", r)
+	}
+	// ...and a real failure behind it is still reported as a failure.
+	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(503) }))
+	defer broken.Close()
+	if r := probe(addrOf(broken), "https://svc.example.com/"); r.Level != "warn" || r.Status != 503 {
+		t.Errorf("https URL, plain 503 service: %+v", r)
 	}
 }
 

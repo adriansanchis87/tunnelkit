@@ -3,7 +3,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=tunnelkit
-PKG_VERSION:=0.2.0
+PKG_VERSION:=0.2.1
 PKG_RELEASE:=1
 PKG_MAINTAINER:=tunnelkit <maintainer@example.com>
 PKG_LICENSE:=MIT

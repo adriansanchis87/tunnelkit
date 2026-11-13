@@ -294,7 +294,7 @@ tunnel using 8 parallel streams, so it reports the real tunnel throughput.
 Install the package and configure it via UCI:
 
 ```bash
-opkg install tunnelkit_0.2.0-1_<arch>.ipk
+opkg install tunnelkit_0.2.1-1_<arch>.ipk
 # edit /etc/config/tunnelkit
 /etc/init.d/tunnelkit enable
 /etc/init.d/tunnelkit start

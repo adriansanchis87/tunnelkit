@@ -5,6 +5,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"os"
 	"strconv"
@@ -78,6 +79,9 @@ type Config struct {
 }
 
 const optionsFile = "/data/options.json"
+
+// exit is os.Exit; a variable so tests can observe it.
+var exit = os.Exit
 
 func defaults() *Config {
 	return &Config{
@@ -244,7 +248,16 @@ func (c *Config) applyFlags(args []string) {
 	srvHK := fs.String("server-host-key", c.ServerHostKey, "server: host key file")
 	srvAK := fs.String("server-authorized-keys", c.ServerAuthorizedKeys, "server: authorized_keys")
 	srvMon := fs.String("server-monitor-addr", c.ServerMonitorAddr, "server: web panel (empty=off)")
-	if fs.Parse(args) != nil {
+	if err := fs.Parse(args); err != nil {
+		// flag already printed the problem (or the usage, for -h/--help). Never
+		// carry on with a half-read command line: a mistyped option such as
+		// --hostkey would otherwise be ignored and the program would start
+		// without it (for host pinning, silently unpinned).
+		if errors.Is(err, flag.ErrHelp) {
+			exit(0)
+			return
+		}
+		exit(2)
 		return
 	}
 	c.ServerSSHAddr, c.ServerHostKey, c.ServerAuthorizedKeys = *srvAddr, *srvHK, *srvAK

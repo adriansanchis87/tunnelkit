@@ -3,7 +3,7 @@
 # and it is the SAME image as the Docker one. The first time you push, the
 # workflow publishes the images to GHCR and the add-on can be installed.
 name: TunnelKit Client
-version: "0.2.0"
+version: "0.2.1"
 slug: tunnelkit_client
 description: Robust reverse SSH tunnel to your server, with /metrics and speedtest
 url: https://github.com/adriansanchis87/tunnelkit
