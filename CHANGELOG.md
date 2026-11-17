@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **The panel's speedtest button looked dead.** A measurement takes about 12 s but
+  the table is redrawn every 5 s, so the button went back to "Measure" in the middle
+  of the test and the result seemed lost. It now stays disabled as "measuring…" until
+  the result (or the error) arrives.
+- The ON dialog showed the same name twice ("<title> — tunnel" and the key name) and
+  two unexplained groups. It now shows the title with the technical name under it,
+  and the two groups are labelled: forwarded ports (testable) and web links (public
+  addresses of the panel that reach the client).
+
 ## [0.2.2] - 2026-11-17
 
 ### Added
