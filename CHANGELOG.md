@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-11-17
+
 ### Fixed
 - **A speedtest made the client's speedtest button (and its reconnect count) vanish
   for a few seconds.** The server reads each client's `/metrics` through the tunnel
