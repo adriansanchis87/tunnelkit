@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-11-17
+
+### Fixed
+- **A speedtest made the client's speedtest button (and its reconnect count) vanish
+  for a few seconds.** The server reads each client's `/metrics` through the tunnel
+  every few seconds; while a speedtest saturates a slow link that read times out, and
+  the empty answer overwrote the last good values, so the panel showed "—" until the
+  next successful read. A failed read now keeps the previous values.
+
 ## [0.2.3] - 2026-11-17
 
 ### Fixed
