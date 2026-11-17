@@ -230,7 +230,9 @@ Key settings (see `server/docker-compose.yml`):
   to `webhome.<panel domain>` and `tk-home-ssh` to
   `sshhome.<panel domain>`. Requests arriving at the monitor with that
   host label are reverse-proxied to the client's lowest forwarded port. Empty
-  (default) = no links, no host-based proxying.
+  (default) = no links, no host-based proxying. This pattern is only a
+  convenience: a client can instead be given its main URL explicitly in
+  `clients.json` (`host`), whatever its name, and that wins over the template.
 - `TK_SERVER_LINK_BACKUP_SUFFIX` (optional, e.g. `-b`) — also offer, for each
   client, a **backup** link to the sibling client of the same site (other
   role) reached through this one, at `<sibling label><suffix>`. Useful when
@@ -256,6 +258,8 @@ them readable names and, optionally, the URL each service is expected to answer 
 {
   "tk-site1-web": {
     "title": "Site 1 - web server",
+    "host": "site1",
+    "main_port": 8080,
     "ports": {
       "8080": { "name": "Web UI", "url": "https://web.site1.example.com" },
       "8048": { "name": "Metrics" }
@@ -264,6 +268,13 @@ them readable names and, optionally, the URL each service is expected to answer 
 }
 ```
 
+- `host` (optional) is the **main URL** of the client: a single subdomain label
+  under the panel's own domain (`site1` → `site1.<panel domain>`). It needs no
+  particular client name and wins over `TK_SERVER_LINKS`, which becomes just a
+  default for clients that have no `host`. Requests arriving with that host label
+  are reverse-proxied to the client. Labels must be unique (a duplicate is ignored
+  and logged). `main_port` (optional) picks which forwarded port is served there;
+  by default, the lowest one.
 - `title` replaces the client name in the table (the technical name stays visible
   under it). `ports` maps a port number to a `name` and an optional `url`.
 - It is presentation only: **access control stays in `authorized_keys`**. A port not

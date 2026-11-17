@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,6 +20,8 @@ import (
 //	{
 //	  "tk-site1-web": {
 //	    "title": "Site 1 - web server",
+//	    "host": "site1",        // optional: subdomain of the main URL (any name)
+//	    "main_port": 8080,      // optional: forwarded port served at that URL
 //	    "ports": {
 //	      "8080": {"name": "Web UI", "url": "https://web.site1.example.com"},
 //	      "8048": {"name": "Metrics"}
@@ -41,8 +44,14 @@ type PortMeta struct {
 
 // ClientMeta describes one client.
 type ClientMeta struct {
-	Title string              `json:"title,omitempty"`
-	Ports map[string]PortMeta `json:"ports,omitempty"`
+	Title string `json:"title,omitempty"`
+	// Host is the subdomain label of the client's main URL (the panel appends
+	// its own parent domain). It overrides TK_SERVER_LINKS, so a client's name
+	// does not have to follow any pattern.
+	Host string `json:"host,omitempty"`
+	// MainPort is the forwarded port served at that URL; default: the lowest.
+	MainPort int                 `json:"main_port,omitempty"`
+	Ports    map[string]PortMeta `json:"ports,omitempty"`
 }
 
 // MetaStore holds the parsed file and reloads it when its mtime changes, like
@@ -134,9 +143,27 @@ func sanitize(in map[string]ClientMeta, warn func(string)) map[string]ClientMeta
 		names = append(names, n)
 	}
 	sort.Strings(names)
+	hosts := map[string]string{} // label -> client that owns it
 	for _, name := range names {
 		c := in[name]
 		oc := ClientMeta{Title: clip(c.Title, maxTitleLen)}
+		if h := strings.ToLower(strings.TrimSpace(c.Host)); h != "" {
+			switch {
+			case !hostLabel.MatchString(h):
+				warn(name + ": host \"" + c.Host + "\" must be a single DNS label (letters, digits, '-'); ignored")
+			case hosts[h] != "":
+				warn(name + ": host \"" + h + "\" is already used by " + hosts[h] + "; ignored")
+			default:
+				hosts[h], oc.Host = name, h
+			}
+		}
+		if c.MainPort != 0 {
+			if c.MainPort < 1 || c.MainPort > 65535 {
+				warn(name + ": main_port " + strconv.Itoa(c.MainPort) + " is not a valid port; ignored")
+			} else {
+				oc.MainPort = c.MainPort
+			}
+		}
 		if c.Title != oc.Title {
 			warn(name + ": title is longer than " + strconv.Itoa(maxTitleLen) + " characters, truncated")
 		}
@@ -163,6 +190,8 @@ func sanitize(in map[string]ClientMeta, warn func(string)) map[string]ClientMeta
 	}
 	return out
 }
+
+var hostLabel = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 func clip(s string, n int) string {
 	s = strings.TrimSpace(s)

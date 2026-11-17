@@ -139,3 +139,60 @@ func TestDescribe(t *testing.T) {
 		t.Errorf("nil meta: %+v", r2)
 	}
 }
+
+func TestMainHostFromMetaNeedsNoPattern(t *testing.T) {
+	p := writeMeta(t, t.TempDir(), `{
+	  "argos@example.com": {"host": "Argos", "main_port": 8241},
+	  "tk-a-web": {"host": "my-site"},
+	  "tk-b-web": {"host": "my-site"},
+	  "tk-c-web": {"host": "not a label!"},
+	  "tk-d-web": {"main_port": 70000}
+	}`)
+	m := NewMetaStore(p)
+	lc := ParseLinkConfig("web=web{site}", "")
+	lc.Meta = m
+
+	if got := lc.mainHost("argos@example.com"); got != "argos" {
+		t.Errorf("explicit host on a free-form name = %q, want argos", got)
+	}
+	if got := lc.mainHost("tk-a-web"); got != "my-site" {
+		t.Errorf("explicit host must beat the template, got %q", got)
+	}
+	// duplicate host: the second client is ignored, falls back to its template
+	if got := lc.mainHost("tk-b-web"); got != "webb" {
+		t.Errorf("duplicate host should fall back to the template, got %q", got)
+	}
+	if got := lc.mainHost("tk-c-web"); got != "webc" {
+		t.Errorf("invalid host should fall back to the template, got %q", got)
+	}
+	if got := lc.mainHost("tk-d-web"); got != "webd" || m.Get("tk-d-web").MainPort != 0 {
+		t.Errorf("invalid main_port must be dropped, got host %q meta %+v", got, m.Get("tk-d-web"))
+	}
+	// no template and no meta -> no main URL, as before
+	if got := lc.mainHost("tk-x-ssh"); got != "" {
+		t.Errorf("unmapped role = %q, want empty", got)
+	}
+	// a free-form name still gets a link
+	l := lc.linksFor("argos@example.com", nil)
+	if len(l) != 1 || l[0].Kind != "main" || l[0].Host != "argos" {
+		t.Errorf("links = %+v", l)
+	}
+	// works with no templates at all
+	only := LinkConfig{Meta: m}
+	if got := only.mainHost("argos@example.com"); got != "argos" {
+		t.Errorf("without TK_SERVER_LINKS = %q", got)
+	}
+}
+
+func TestMainPortPrefersMetaPort(t *testing.T) {
+	c := &Client{ports: []uint32{8242, 8241, 8240}}
+	if got := mainPort(c, 0); got != 8240 {
+		t.Errorf("default = %d, want lowest 8240", got)
+	}
+	if got := mainPort(c, 8241); got != 8241 {
+		t.Errorf("configured = %d, want 8241", got)
+	}
+	if got := mainPort(c, 9999); got != 8240 {
+		t.Errorf("configured but not forwarded = %d, want lowest 8240", got)
+	}
+}

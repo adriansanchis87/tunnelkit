@@ -303,6 +303,9 @@ type link struct {
 type LinkConfig struct {
 	Templates    map[string]string // role -> template with {site} and {role}
 	BackupSuffix string
+	// Meta (clients.json) can give a client an explicit main host, which wins
+	// over the templates and needs no particular client name.
+	Meta *MetaStore
 }
 
 // ParseLinkConfig parses "role=template,role=template" (spaces tolerated).
@@ -339,6 +342,9 @@ func splitName(name string) (site, role string, ok bool) {
 // mainHost is the subdomain label of a client's main service, or "" when the
 // operator configured no template for its role.
 func (lc LinkConfig) mainHost(name string) string {
+	if h := lc.Meta.Get(name).Host; h != "" {
+		return h
+	}
 	site, role, ok := splitName(name)
 	if !ok {
 		return ""
@@ -358,12 +364,14 @@ func (lc LinkConfig) linksFor(name string, known []string) []link {
 	if main == "" {
 		return nil
 	}
-	_, role, _ := splitName(name)
+	site, role, named := splitName(name)
+	if !named {
+		role = name
+	}
 	out := []link{{Kind: "main", Label: role, Host: main}}
-	if lc.BackupSuffix == "" {
+	if lc.BackupSuffix == "" || !named {
 		return out
 	}
-	site, _, _ := splitName(name)
 	for _, other := range known {
 		os_, orole, ok := splitName(other)
 		if !ok || os_ != site || orole == role {
@@ -418,6 +426,7 @@ func describe(r *row, meta *MetaStore) {
 
 // Serve starts the web panel (blocking) + the background sampler.
 func Serve(addr string, reg *Registry, store *TrafficStore, links LinkConfig, meta *MetaStore) error {
+	links.Meta = meta
 	startAt := time.Now()
 	go func() {
 		for range time.Tick(5 * time.Second) {
@@ -633,10 +642,10 @@ func Serve(addr string, reg *Registry, store *TrafficStore, links LinkConfig, me
 		if i := strings.IndexByte(host, '.'); i >= 0 {
 			label = host[:i]
 		}
-		if label != "" && len(links.Templates) > 0 {
+		if label != "" {
 			for _, c := range reg.list() {
 				if links.mainHost(c.Name) == label {
-					port := mainPort(c)
+					port := mainPort(c, meta.Get(c.Name).MainPort)
 					if port == 0 {
 						http.Error(w, "client has no forwarded service", http.StatusBadGateway)
 						return
@@ -672,9 +681,14 @@ func onlyAlnum(s string) string {
 // mainPort returns a client's lowest forwarded port, taken as its main web
 // service (by convention the extra forwards — stats, speedtest — use higher
 // port numbers).
-func mainPort(c *Client) uint32 {
+func mainPort(c *Client, preferred int) uint32 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	for _, p := range c.ports {
+		if preferred > 0 && p == uint32(preferred) {
+			return p
+		}
+	}
 	var m uint32
 	for _, p := range c.ports {
 		if m == 0 || p < m {
