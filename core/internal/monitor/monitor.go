@@ -197,6 +197,7 @@ func (c *Client) scrape() {
 	// accepts locally). On satellite it hovers around the link RTT (~600ms) with
 	// high jitter; the device's processing adds little.
 	var m metrics
+	var got bool // a /metrics answer was read and parsed
 	var lat float64
 	cl := &http.Client{Timeout: 5 * time.Second}
 	for _, p := range ports {
@@ -208,6 +209,7 @@ func (c *Client) scrape() {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if json.Unmarshal(body, &m) == nil {
+			got = true
 			lat = float64(time.Since(t).Microseconds()) / 1000
 			break
 		}
@@ -216,7 +218,12 @@ func (c *Client) scrape() {
 	now := time.Now()
 	tx, rx := c.tx.Load(), c.rx.Load()
 	c.mu.Lock()
-	c.reconnects, c.lastError, c.speedPort = m.Reconnects, m.LastError, m.SpeedtestPort
+	// Only trust an answer we actually got. While a speedtest saturates the
+	// link the scrape times out; overwriting with zero values would make the
+	// panel think the client has no speedtest (and reset its reconnect count).
+	if got {
+		c.reconnects, c.lastError, c.speedPort = m.Reconnects, m.LastError, m.SpeedtestPort
+	}
 	var txr, rxr float64
 	if !c.prevAt.IsZero() {
 		if dt := now.Sub(c.prevAt).Seconds(); dt > 0 {
