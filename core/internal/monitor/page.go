@@ -13,7 +13,7 @@ const page = `<!doctype html>
     --down-bg:#2b1414;--warn:#d29922;--warn-bg:#2b2412;--rx:#3fb950;--tx:#58a6ff;--accent:#58a6ff;}}
   *{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
     background:var(--bg);color:var(--fg);padding:1.5rem}
-  h1{font-size:1.25rem;margin:0 0 .25rem}h3{margin:.8rem 0 .3rem;font-size:.95rem}.sub{color:var(--muted);font-size:.85rem;margin-bottom:1rem}
+  h1{font-size:1.25rem;margin:0 0 .25rem}h3{margin:.8rem 0 .3rem;font-size:.95rem}h4{margin:.8rem 0 .3rem;font-size:.85rem}h4 .muted{font-weight:400}.sub{color:var(--muted);font-size:.85rem;margin-bottom:1rem}
   .summary{display:flex;gap:.75rem;flex-wrap:wrap;margin-bottom:1rem}
   .pill{padding:.35rem .75rem;border-radius:999px;font-size:.85rem;background:var(--card);border:1px solid var(--border)}
   .wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;background:var(--card);
@@ -71,11 +71,17 @@ function spark(vals,w,h,color){
   const max=Math.max(1,...vals);const dx=w/Math.max(1,vals.length-1);
   const pts=vals.map((v,i)=>(i*dx).toFixed(1)+','+(h-(v/max)*(h-2)-1).toFixed(1)).join(' ');
   return '<svg width="'+w+'" height="'+h+'"><polyline fill="none" stroke="'+color+'" stroke-width="1.5" points="'+pts+'"/></svg>';}
-async function speed(name,btn){btn.disabled=true;btn.textContent='measuring…';
-  try{const r=await (await fetch('/api/speedtest?client='+encodeURIComponent(name))).json();
-    btn.parentElement.querySelector('.res').textContent=r.down.toFixed(1)+'↓ '+r.up.toFixed(1)+'↑ Mbps';
-  }catch(e){btn.parentElement.querySelector('.res').textContent='error';}
-  btn.disabled=false;btn.textContent='Measure';tick();}
+// A measurement lasts ~12 s but the table is redrawn every 5 s, so its state
+// lives here (not in the button) and the redraw keeps showing it.
+var MEAS={},MRES={};
+async function speed(name){
+  if(MEAS[name])return;
+  MEAS[name]=1;delete MRES[name];tick();
+  try{const r=await fetch('/api/speedtest?client='+encodeURIComponent(name));
+    if(!r.ok)throw new Error((await r.text()).trim()||('HTTP '+r.status));
+    const d=await r.json();MRES[name]=d.down.toFixed(1)+'↓ '+d.up.toFixed(1)+'↑ Mbps';
+  }catch(e){MRES[name]='error: '+e.message;}
+  delete MEAS[name];tick();}
 async function openTraffic(name){
   const dlg=document.getElementById('dlg'),c=document.getElementById('dlgc');
   c.innerHTML='loading…';dlg.showModal();
@@ -126,11 +132,11 @@ async function probePort(name,port,btn){
 function openLinks(name){
   const dlg=document.getElementById('dlg'),el=document.getElementById('dlgc');
   const c=LAST[name]||{};
-  let html='<h3>'+T(name)+' — tunnel</h3>';
+  let html='<h3>'+T(name)+'</h3>';
   if(c.title)html+='<div class="mono muted" style="margin:-.2rem 0 .5rem">'+esc(name)+'</div>';
   const pi=c.port_info||[];
   if(pi.length){
-    html+='<table><tr><th>Port</th><th>Service</th><th>Expected URL</th><th>Check</th></tr>';
+    html+='<h4>Forwarded ports <span class="muted">(what this client exposes through the tunnel; Test checks it from the server)</span></h4><table><tr><th>Port</th><th>Service</th><th>Expected URL</th><th>Check</th></tr>';
     pi.forEach(p=>{
       const fwd=(c.ports||[]).indexOf(p.port)>=0;
       const href=safeHref(p.url);
@@ -140,7 +146,7 @@ function openLinks(name){
     html+='</table>';}
   const rows=(c.links||[]).map(l=>[l.kind,l.label,linkUrl(l.host)]).filter(x=>x[2]);
   if(rows.length){
-    html+='<h3>Web links</h3><table><tr><th></th><th>target</th><th>link</th></tr>';
+    html+='<h4>Web links <span class="muted">(public addresses of this panel that reach the client)</span></h4><table><tr><th></th><th>target</th><th>link</th></tr>';
     rows.forEach(x=>{html+='<tr><td>'+esc(x[0])+'</td><td class="mono">'+esc(x[1])+'</td><td><a class="svc" href="'+esc(x[2])+'" target="_blank" rel="noopener">'+esc(x[2].replace(/^https?:\/\//,''))+'</a></td></tr>';});
     html+='</table>';}
   if(!pi.length&&!rows.length)html+='<div class="muted">nothing to show: no forwarded ports and no web links (see clients.json and TK_SERVER_LINKS)</div>';
@@ -203,8 +209,9 @@ async function tick(){try{
     const traf='<div class="spark"><div>'+spark(rx,60,20,'var(--rx)')+spark(tx,60,10,'var(--tx)')+'</div>'+
       '<button class="link mono" onclick="openTraffic('+A(c.name)+')" title="view by port/day">'+fmtB(c.traffic_today)+'</button></div>';
     let sp='<span class="muted">—</span>';
-    if(c.speedtest){sp='<div class="spark"><button onclick="speed('+A(c.name)+',this)">Measure</button>'+
-      '<span class="res mono muted">'+(c.last_down?c.last_down.toFixed(1)+'↓ '+c.last_up.toFixed(1)+'↑':'')+'</span>'+
+    if(c.speedtest){const _m=!!MEAS[c.name],_r=MRES[c.name]||(c.last_down?c.last_down.toFixed(1)+'↓ '+c.last_up.toFixed(1)+'↑':'');
+      sp='<div class="spark"><button onclick="speed('+A(c.name)+')"'+(_m?' disabled':'')+'>'+(_m?'measuring… (~12 s)':'Measure')+'</button>'+
+      '<span class="res mono muted">'+esc(_r)+'</span>'+
       spark(c.speed_hist,50,20,'var(--accent)')+'</div>';}
     const _u=mainUrl(c);
     const _t=esc(c.title||c.name);
