@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-17
+
+### Added
+- **The main URL of a client no longer has to follow a naming pattern.** In
+  `clients.json`, `host` gives a client its main subdomain whatever its name, and
+  `main_port` picks the forwarded port served there. `TK_SERVER_LINKS` keeps working
+  as the default for clients without `host`, and may now be left empty.
+
 ## [0.2.1] - 2026-11-13
 
 ### Fixed
