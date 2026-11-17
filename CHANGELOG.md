@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-11-17
+
 ### Fixed
 - **The panel's speedtest button looked dead.** A measurement takes about 12 s but
   the table is redrawn every 5 s, so the button went back to "Measure" in the middle
