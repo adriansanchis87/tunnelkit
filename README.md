@@ -242,7 +242,6 @@ them readable names and, optionally, the URL each service is expected to answer 
 {
   "site1-web": {
     "title": "Site 1 - web server",
-    "host": "site1",
     "ports": {
       "8080": { "name": "Web UI", "url": "https://web.site1.example.com" },
       "8048": { "name": "Metrics" }
@@ -257,10 +256,10 @@ them readable names and, optionally, the URL each service is expected to answer 
   The dialog opened by the **ON** badge lists every port, sorted by number, with its
   URL (if any), a Test button and a check on the default. No naming pattern and no
   extra flag are needed.
-- `host` (optional) is a subdomain label under the panel's own domain
-  (`site1` → `site1.<panel domain>`): requests arriving with it are reverse-proxied
-  to the client's default port (else its lowest forwarded port). Without `host` the
-  client has no host-based URL and no proxying. Labels must be unique.
+- The **host of each port's URL** is also what the monitor reverse-proxies: a request
+  that reaches the monitor with that `Host` (e.g. through your ingress proxy) is forwarded
+  to that port, so a client's ports may use different hosts. No extra field, nothing to
+  keep in sync with the URLs.
 - `title` replaces the client name in the table (the technical name stays visible
   under it). `ports` maps a port number to a `name` and an optional `url`.
 - It is presentation only: **access control stays in `authorized_keys`**. A port not

@@ -9,9 +9,10 @@ All notable changes to this project are documented here. The format follows
 ## [0.2.7] - 2026-11-19
 
 ### Removed
-- **`TK_SERVER_LINKS`, `TK_SERVER_LINK_BACKUP_SUFFIX` and the `tk-<site>-<role>` naming pattern.** The
-  main URL host of a client is now only its `host` in `clients.json`; client names are free-form.
-  Backup links in the panel are gone (they were only a shortcut).
+- **`TK_SERVER_LINKS`, `TK_SERVER_LINK_BACKUP_SUFFIX`, the `host` field of `clients.json` (added in 0.2.2),
+  the `tk-<site>-<role>` naming pattern and the panel's extra links.** Client names are free-form.
+  The monitor now reverse-proxies requests whose `Host` equals the host of a port's URL (each
+  port may have its own), so everything comes from the URLs already in `clients.json`.
 
 ## [0.2.6] - 2026-11-19
 

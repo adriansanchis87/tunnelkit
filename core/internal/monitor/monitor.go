@@ -278,9 +278,6 @@ type row struct {
 	// Uptime24h is the % of the last 24h the client was connected (from the
 	// availability log); -1 when there is no data.
 	Uptime24h float64 `json:"uptime_24h"`
-	// Links are the web entry points the panel offers for this client, built
-	// from the client's "host" in clients.json (empty when it has none).
-	Links []link `json:"links,omitempty"`
 	// The fields below are only set on OFFLINE rows. They say what the server
 	// saw from the client's last known IP since it went down: nothing at all,
 	// or connections that arrived and failed (and how).
@@ -294,15 +291,6 @@ type row struct {
 	// with Connected: TCP down + beats fresh = only TCP is broken on the path.
 	UDPSecondsAgo *float64 `json:"udp_seconds_ago,omitempty"`
 	UDPIP         string   `json:"udp_ip,omitempty"`
-}
-
-// link is the web entry point of a client: Host is the subdomain label only
-// (the panel prepends the scheme and appends its own parent domain). It comes
-// from the client's "host" in clients.json.
-type link struct {
-	Kind  string `json:"kind"`
-	Label string `json:"label"`
-	Host  string `json:"host"`
 }
 
 func (c *Client) row() row {
@@ -391,7 +379,6 @@ func Serve(addr string, reg *Registry, store *TrafficStore, meta *MetaStore) err
 				r.TrafficToday = store.todayTotal(c.Name)
 				r.Uptime24h = store.uptimePct(c.Name, 86400)
 			}
-			r.Links = linksFor(meta, c.Name)
 			describe(&r, meta)
 			r.UDPSecondsAgo, r.UDPIP = reg.heartbeat(c.Name)
 			rows = append(rows, r)
@@ -417,7 +404,6 @@ func Serve(addr string, reg *Registry, store *TrafficStore, meta *MetaStore) err
 					TrafficToday:     store.todayTotal(name),
 					OfflineSeconds:   off,
 					Uptime24h:        store.uptimePct(name, 86400),
-					Links:            linksFor(meta, name),
 					LastIP:           ip,
 					LastAttemptError: lerr,
 					FailedAttempts:   fails,
@@ -540,25 +526,21 @@ func Serve(addr string, reg *Registry, store *TrafficStore, meta *MetaStore) err
 		_, _ = io.WriteString(w, page)
 	})
 
-	// Root handler: if the request's host label equals a connected client's
-	// "host" in clients.json, reverse-proxy to that client's
-	// lowest forwarded port at the ROOT path, so web apps that expect to be
-	// served from "/" work. Otherwise serve the dashboard/API.
+	// Root handler: if the request's Host equals the host of the URL of one of a
+	// connected client's ports in clients.json, reverse-proxy to that port at the
+	// ROOT path, so web apps that expect to be served from "/" work. Otherwise
+	// serve the dashboard/API.
 	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host := r.Host
 		if h, _, err := net.SplitHostPort(host); err == nil {
 			host = h
 		}
-		label := host
-		if i := strings.IndexByte(host, '.'); i >= 0 {
-			label = host[:i]
-		}
-		if label != "" {
+		host = strings.ToLower(host)
+		if host != "" {
 			for _, c := range reg.list() {
-				if h := meta.Get(c.Name).Host; h != "" && h == label {
-					port := mainPort(c, meta.DefaultPort(c.Name))
-					if port == 0 {
-						http.Error(w, "client has no forwarded service", http.StatusBadGateway)
+				if port := meta.PortForHost(c.Name, host); port != 0 {
+					if !c.forwards(uint32(port)) {
+						http.Error(w, "port is not forwarded by the client", http.StatusBadGateway)
 						return
 					}
 					target := &url.URL{Scheme: "http", Host: fmt.Sprintf("127.0.0.1:%d", port)}
@@ -579,37 +561,16 @@ func Serve(addr string, reg *Registry, store *TrafficStore, meta *MetaStore) err
 	return http.ListenAndServe(addr, root)
 }
 
-// linksFor is the client's main link, from its "host" in clients.json.
-func linksFor(meta *MetaStore, name string) []link {
-	h := meta.Get(name).Host
-	if h == "" {
-		return nil
-	}
-	return []link{{Kind: "main", Label: name, Host: h}}
-}
-
-// mainPort returns a client's lowest forwarded port, taken as its main web
-// service (by convention the extra forwards — stats, speedtest — use higher
-// port numbers).
-func mainPort(c *Client, preferred int) uint32 {
+// forwards reports whether the client currently forwards the port.
+func (c *Client) forwards(port uint32) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return pickMain(c.ports, preferred)
-}
-
-// pickMain is the preferred port when it is forwarded, else the lowest one
-// (0 when nothing is forwarded).
-func pickMain(ports []uint32, preferred int) uint32 {
-	var m uint32
-	for _, p := range ports {
-		if preferred > 0 && p == uint32(preferred) {
-			return p
-		}
-		if m == 0 || p < m {
-			m = p
+	for _, p := range c.ports {
+		if p == port {
+			return true
 		}
 	}
-	return m
+	return false
 }
 
 // udpDiagnosis completes an offline client's diagnosis with what the UDP

@@ -140,46 +140,26 @@ func TestDescribe(t *testing.T) {
 	}
 }
 
-func TestMainHostFromMetaNeedsNoPattern(t *testing.T) {
+func TestPortForHostPerPortURL(t *testing.T) {
 	p := writeMeta(t, t.TempDir(), `{
-	  "argos@example.com": {"host": "Argos"},
-	  "a-web": {"host": "my-site"},
-	  "b-web": {"host": "my-site"},
-	  "c-web": {"host": "not a label!"},
-	  "d-web": {}
+	  "argos@example.com": {"ports": {"22": {"name": "SSH"}, "8241": {"url": "https://Argos.Example.com/app"}}},
+	  "a-web": {"ports": {"8080": {"url": "ssh://x.example.com"}, "8081": {"url": "https://web-a.example.com"}, "8082": {"url": "https://other.example.com"}}}
 	}`)
 	m := NewMetaStore(p)
-
-	host := func(name string) string {
-		if l := linksFor(m, name); len(l) == 1 && l[0].Kind == "main" {
-			return l[0].Host
+	for _, c := range []struct {
+		name, host string
+		want       int
+	}{
+		{"argos@example.com", "ARGOS.example.com", 8241}, // case-insensitive, path ignored
+		{"a-web", "web-a.example.com", 8081},
+		{"a-web", "other.example.com", 8082}, // another host, another port, same client
+		{"a-web", "x.example.com", 0},        // ssh:// is not a web URL
+		{"a-web", "", 0},
+		{"unknown", "web-a.example.com", 0},
+	} {
+		if got := m.PortForHost(c.name, c.host); got != c.want {
+			t.Errorf("PortForHost(%q, %q) = %d, want %d", c.name, c.host, got, c.want)
 		}
-		return ""
-	}
-	if got := host("argos@example.com"); got != "argos" {
-		t.Errorf("host on a free-form name = %q, want argos", got)
-	}
-	if got := host("a-web"); got != "my-site" {
-		t.Errorf("a-web = %q, want my-site", got)
-	}
-	// duplicate, invalid or missing host: no link at all (no naming pattern fallback)
-	for _, n := range []string{"b-web", "c-web", "d-web", "unknown"} {
-		if got := host(n); got != "" {
-			t.Errorf("%s = %q, want no link", n, got)
-		}
-	}
-}
-
-func TestMainPortPrefersMetaPort(t *testing.T) {
-	c := &Client{ports: []uint32{8242, 8241, 8240}}
-	if got := mainPort(c, 0); got != 8240 {
-		t.Errorf("default = %d, want lowest 8240", got)
-	}
-	if got := mainPort(c, 8241); got != 8241 {
-		t.Errorf("configured = %d, want 8241", got)
-	}
-	if got := mainPort(c, 9999); got != 8240 {
-		t.Errorf("configured but not forwarded = %d, want lowest 8240", got)
 	}
 }
 
