@@ -196,3 +196,21 @@ func TestMainPortPrefersMetaPort(t *testing.T) {
 		t.Errorf("configured but not forwarded = %d, want lowest 8240", got)
 	}
 }
+
+func TestPickMainAndDescribeMainPort(t *testing.T) {
+	if got := pickMain([]uint32{8242, 8240, 8241}, 0); got != 8240 {
+		t.Errorf("lowest = %d", got)
+	}
+	if got := pickMain([]uint32{8242, 8240, 8241}, 8241); got != 8241 {
+		t.Errorf("preferred = %d", got)
+	}
+	if got := pickMain(nil, 8241); got != 0 {
+		t.Errorf("none = %d", got)
+	}
+	m := NewMetaStore(writeMeta(t, t.TempDir(), `{"tk-a-web":{"main_port":8241}}`))
+	r := row{Name: "tk-a-web", Ports: []uint32{8240, 8241}}
+	describe(&r, m)
+	if r.MainPort != 8241 {
+		t.Errorf("row main port = %d", r.MainPort)
+	}
+}

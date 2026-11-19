@@ -252,6 +252,7 @@ type row struct {
 	Name         string     `json:"name"`
 	Title        string     `json:"title,omitempty"`     // display title from clients.json
 	PortInfo     []portInfo `json:"port_info,omitempty"` // ports with their names / expected URLs
+	MainPort     uint32     `json:"main_port,omitempty"` // the default port (served at the main URL)
 	Connected    bool       `json:"connected"`
 	IP           string     `json:"ip"`
 	Ports        []uint32   `json:"ports"`
@@ -416,6 +417,7 @@ func (c *Client) row() row {
 func describe(r *row, meta *MetaStore) {
 	m := meta.Get(r.Name)
 	r.Title = m.Title
+	r.MainPort = pickMain(r.Ports, m.MainPort)
 	seen := map[uint32]bool{}
 	for _, p := range r.Ports {
 		pm := meta.Port(r.Name, p)
@@ -691,13 +693,17 @@ func onlyAlnum(s string) string {
 func mainPort(c *Client, preferred int) uint32 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for _, p := range c.ports {
+	return pickMain(c.ports, preferred)
+}
+
+// pickMain is the preferred port when it is forwarded, else the lowest one
+// (0 when nothing is forwarded).
+func pickMain(ports []uint32, preferred int) uint32 {
+	var m uint32
+	for _, p := range ports {
 		if preferred > 0 && p == uint32(preferred) {
 			return p
 		}
-	}
-	var m uint32
-	for _, p := range c.ports {
 		if m == 0 || p < m {
 			m = p
 		}

@@ -116,6 +116,24 @@ function openRec(name){
   el.innerHTML=html;dlg.showModal();}
 function portsLine(c){
   const pi=c.port_info||[];
+  // The main web link (TK_SERVER_LINKS / clients.json "host") belongs to the
+  // default port, so it is shown on that port's row instead of in its own list.
+  const mainLink=mainUrl(c);
+  if(pi.length){
+    html+='<table><tr><th>Port</th><th>Service</th><th>URL</th><th>Check</th></tr>';
+    pi.forEach(p=>{
+      const fwd=(c.ports||[]).indexOf(p.port)>=0;
+      const def=p.port===c.main_port;
+      const u=p.url||(def?mainLink:'');
+      const href=safeHref(u);
+      const url=!u?'<span class="muted">-</span>':(href?'<a class="svc" href="'+esc(href)+'" target="_blank" rel="noopener">'+esc(u.replace(/^https?:\/\//i,''))+'</a>':'<span class="mono">'+esc(u)+'</span>');
+      const chk=fwd?'<button onclick="probePort('+A(name)+','+p.port+',this)">Test</button> <span id="pr'+p.port+'" class="mono"></span>':'<span class="muted">not forwarded now</span>';
+      html+='<tr><td class="mono">'+p.port+(def?' <span class="muted" style="font-size:.7rem;border:1px solid var(--border);border-radius:4px;padding:0 .3rem" title="default port: served at the main URL">default</span>':'')+'</td><td>'+(p.name?esc(p.name):'<span class="muted">-</span>')+'</td><td>'+url+'</td><td style="white-space:normal">'+chk+'</td></tr>';});
+    html+='</table>';}
+  else html+='<div class="muted">nothing to show: no forwarded ports (see clients.json)</div>';
+  el.innerHTML=html;dlg.showModal();}
+function portsLine(c){
+  const pi=c.port_info||[];
   const parts=pi.length?pi.map(p=>(p.name?esc(p.name)+' ':'')+':'+p.port):(c.ports||[]).map(p=>':'+p);
   return (c.title?esc(c.name)+'<br>':'')+parts.join(' · ');}
 async function probePort(name,port,btn){
