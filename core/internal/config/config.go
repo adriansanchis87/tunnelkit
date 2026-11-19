@@ -41,7 +41,7 @@ type Config struct {
 	// The client runs it when HeartbeatPort > 0 and HeartbeatName is set; it
 	// goes to Host:HeartbeatPort. The key is shared by clients and server.
 	HeartbeatPort     int
-	HeartbeatName     string // this client's name as the server knows it (tk-<site>-<role>)
+	HeartbeatName     string // this client's name as the server knows it (e.g. site1-web)
 	HeartbeatKey      string
 	HeartbeatInterval time.Duration
 
@@ -66,16 +66,6 @@ type Config struct {
 	ServerUDPAddr        string // UDP heartbeat echo (empty = off, e.g. ":2223")
 	ServerTrafficFile    string // per-port/per-day traffic persistence
 	ServerClientsFile    string // optional clients.json: titles, port names, expected URLs (empty = off)
-	// ServerLinks maps a client ROLE to the subdomain label of its main web
-	// service, for clients named "tk-<site>-<role>". Format:
-	// "role=template,role=template" with {site} and {role} placeholders, e.g.
-	// "web=web{site},ssh=ssh{site}". Empty = the panel shows no links
-	// and the monitor does no host-based reverse proxying.
-	ServerLinks string
-	// ServerLinkBackupSuffix, when set (e.g. "-b"), adds a "backup" link per
-	// client: the sibling client of the same site (other role) reached through
-	// this one, at <sibling main label><suffix>.
-	ServerLinkBackupSuffix string
 }
 
 const optionsFile = "/data/options.json"
@@ -221,8 +211,6 @@ func (c *Config) applyEnv() {
 	setStr(&c.ServerMonitorAddr, "TK_SERVER_MONITOR_ADDR")
 	setStr(&c.ServerTrafficFile, "TK_SERVER_TRAFFIC_FILE")
 	setStr(&c.ServerClientsFile, "TK_SERVER_CLIENTS")
-	setStr(&c.ServerLinks, "TK_SERVER_LINKS")
-	setStr(&c.ServerLinkBackupSuffix, "TK_SERVER_LINK_BACKUP_SUFFIX")
 }
 
 func (c *Config) applyFlags(args []string) {

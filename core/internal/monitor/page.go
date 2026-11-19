@@ -62,14 +62,9 @@ function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(ch){retu
 function A(s){return esc(JSON.stringify(String(s)));}
 function T(name){const c=LAST[name];return esc((c&&c.title)||name);}
 function safeHref(u){return /^https?:\/\//i.test(u||'')?u:'';}
-// Links come from the server (/api/status "links", built from TK_SERVER_LINKS):
-// each is a subdomain label, completed here with the panel's own parent domain.
-function linkUrl(host){var p=location.host.split('.');if(p.length<2||!host)return '';return location.protocol+'//'+host+'.'+p.slice(1).join('.');}
-function mainUrl(c){var l=(c.links||[]).find(x=>x.kind==='main');return l?linkUrl(l.host):'';}
 // The default port (flagged by the server: the first one in clients.json with an
-// http(s) URL) gives the URL the client's name opens. With none, the older
-// TK_SERVER_LINKS address, if any.
-function nameUrl(c){var d=(c.port_info||[]).find(p=>p.default&&safeHref(p.url));return d?d.url:mainUrl(c);}
+// http(s) URL) gives the URL the client's name opens.
+function nameUrl(c){var d=(c.port_info||[]).find(p=>p.default&&safeHref(p.url));return d?d.url:'';}
 function spark(vals,w,h,color){
   if(!vals||!vals.length)return '<svg width="'+w+'" height="'+h+'"></svg>';
   const max=Math.max(1,...vals);const dx=w/Math.max(1,vals.length-1);
@@ -218,7 +213,7 @@ async function tick(){try{
     const _t=esc(c.title||c.name);
     const nm=_u?'<a class="svc" href="'+esc(_u)+'" target="_blank" rel="noopener" title="open the default URL">'+_t+'</a>':'<b>'+_t+'</b>';
     return '<tr><td>'+nm+'<br><span class="mono muted" style="font-size:.75rem">'+portsLine(c)+'</span></td>'+
-      '<td><button class="badge up linkbadge" onclick="openLinks('+A(c.name)+')" title="tunnel links (main + backup)"><span class="dot"></span>ON</button></td><td class="mono">'+(c.ip||'-')+'</td>'+
+      '<td><button class="badge up linkbadge" onclick="openLinks('+A(c.name)+')" title="tunnel ports"><span class="dot"></span>ON</button></td><td class="mono">'+(c.ip||'-')+'</td>'+
       '<td class="mono">'+fmtU(c.uptime_seconds)+'</td><td class="mono">'+(c.active||0)+'</td>'+
       '<td>'+rc+'</td><td class="mono muted">'+(c.latency_ms?c.latency_ms.toFixed(0)+' ms':'-')+'</td>'+
       '<td>'+traf+'</td><td>'+sp+'</td><td>'+upCell(c)+'</td></tr>';

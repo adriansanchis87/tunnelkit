@@ -62,7 +62,7 @@ It is a diagnostic, not a second tunnel, and it does not use any other VPN.
 | server | `TK_SERVER_UDP_ADDR` | UDP listen address (`:2223`); empty = off. Publish it (`2223:2223/udp`) |
 | both | `TK_UDP_KEY` | shared key; packets are HMAC-signed, bad ones get no reply |
 | client | `TK_UDP_PORT` | server UDP port (`2223`); 0 = off |
-| client | `TK_UDP_NAME` | the name the server knows the client by (`tk-<site>-<role>`) |
+| client | `TK_UDP_NAME` | the name the server knows the client by (e.g. `site1-web`) |
 | client | `TK_UDP_INTERVAL` | seconds between beats (default 10) |
 
 Packets are fixed-size and the reply is as long as the request (no

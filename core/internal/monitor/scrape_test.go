@@ -24,7 +24,7 @@ func TestScrapeKeepsLastGoodMetrics(t *testing.T) {
 	_, ps, _ := net.SplitHostPort(srv.Listener.Addr().String())
 	port, _ := strconv.Atoi(ps)
 
-	c := &Client{Name: "tk-x-web", ports: []uint32{uint32(port)}}
+	c := &Client{Name: "x-web", ports: []uint32{uint32(port)}}
 	c.scrape()
 	if c.speedPort != 8243 || c.reconnects != 7 || c.lastError != "boom" {
 		t.Fatalf("after good scrape: speedPort=%d reconnects=%d err=%q", c.speedPort, c.reconnects, c.lastError)

@@ -8,7 +8,7 @@ optional UDP heartbeat key.
 The server identifies a client by its key; two keys can be valid at the same time,
 so a rotation needs no downtime:
 
-1. Generate the new key (`ssh-keygen -t ed25519 -N "" -f id_new -C tk-site1-web`,
+1. Generate the new key (`ssh-keygen -t ed25519 -N "" -f id_new -C site1-web`,
    same comment/name as before).
 2. Add its line to `data/authorized_keys`, with the same `permitlisten` list. Keep
    the old line for now.

@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/url"
 	"os"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,9 +18,8 @@ import (
 // authorization: access control stays in authorized_keys.
 //
 //	{
-//	  "tk-site1-web": {
+//	  "site1-web": {
 //	    "title": "Site 1 - web server",
-//	    "host": "site1",        // optional: subdomain of the main URL (any name)
 //	    "ports": {
 //	      "8080": {"name": "Web UI", "url": "https://web.site1.example.com", "default": true},
 //	      "8048": {"name": "Metrics"}
@@ -44,11 +42,7 @@ type PortMeta struct {
 
 // ClientMeta describes one client.
 type ClientMeta struct {
-	Title string `json:"title,omitempty"`
-	// Host is the subdomain label of the client's main URL (the panel appends
-	// its own parent domain). It overrides TK_SERVER_LINKS, so a client's name
-	// does not have to follow any pattern.
-	Host  string              `json:"host,omitempty"`
+	Title string              `json:"title,omitempty"`
 	Ports map[string]PortMeta `json:"ports,omitempty"`
 
 	// order is the order the ports appear in the file (a Go map forgets it).
@@ -145,8 +139,7 @@ func (m *MetaStore) Port(name string, port uint32) PortMeta {
 
 // DefaultPort is the client's default port: the FIRST port in the file's "ports"
 // list that has an http(s) URL (0 when none), so the operator picks it by
-// ordering the list. Its URL is what the client's name opens in the panel and the
-// port the panel serves at the client's host label.
+// ordering the list. Its URL is what the client's name opens in the panel.
 func (m *MetaStore) DefaultPort(name string) int {
 	c := m.Get(name)
 	for _, k := range c.order {
@@ -238,21 +231,10 @@ func sanitize(in map[string]ClientMeta, warn func(string)) map[string]ClientMeta
 		names = append(names, n)
 	}
 	sort.Strings(names)
-	hosts := map[string]string{} // label -> client that owns it
 	for _, name := range names {
 		c := in[name]
 		oc := ClientMeta{Title: clip(c.Title, maxTitleLen)}
 		seenPort := map[int]bool{}
-		if h := strings.ToLower(strings.TrimSpace(c.Host)); h != "" {
-			switch {
-			case !hostLabel.MatchString(h):
-				warn(name + ": host \"" + c.Host + "\" must be a single DNS label (letters, digits, '-'); ignored")
-			case hosts[h] != "":
-				warn(name + ": host \"" + h + "\" is already used by " + hosts[h] + "; ignored")
-			default:
-				hosts[h], oc.Host = name, h
-			}
-		}
 		for _, key := range keysInOrder(c) {
 			p := c.Ports[key]
 			port, err := strconv.Atoi(strings.TrimSpace(key))
@@ -282,8 +264,6 @@ func sanitize(in map[string]ClientMeta, warn func(string)) map[string]ClientMeta
 	return out
 }
 
-var hostLabel = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
-
 func clip(s string, n int) string {
 	s = strings.TrimSpace(s)
 	if r := []rune(s); len(r) > n {
@@ -308,4 +288,26 @@ func cleanURL(raw string) string {
 		return raw
 	}
 	return ""
+}
+
+// PortForHost is the port of the client whose http(s) URL has this hostname (0
+// when none): requests that reach the monitor with that Host are reverse-proxied
+// to it. Each port may have its own host; the first one in file order wins.
+func (m *MetaStore) PortForHost(name, host string) int {
+	host = strings.ToLower(host)
+	if host == "" {
+		return 0
+	}
+	c := m.Get(name)
+	for _, k := range keysInOrder(c) {
+		n, err := strconv.Atoi(k)
+		pm := c.Ports[k]
+		if err != nil || !isWebURL(pm.URL) {
+			continue
+		}
+		if u, err := url.Parse(pm.URL); err == nil && strings.ToLower(u.Hostname()) == host {
+			return n
+		}
+	}
+	return 0
 }

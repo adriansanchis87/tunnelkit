@@ -222,22 +222,6 @@ Key settings (see `server/docker-compose.yml`):
   persistence.
 - `TK_SERVER_CLIENTS=/data/clients.json` (optional) — titles, port names and
   expected URLs shown in the panel; see [Naming clients and ports](#naming-clients-and-ports).
-- `TK_SERVER_LINKS` (optional) — web links the panel shows per client, for
-  clients named `tk-<site>-<role>`. A `role=template` list with `{site}` /
-  `{role}` placeholders, giving the **subdomain label** of that client's main
-  service under the panel's own domain. Example:
-  `TK_SERVER_LINKS="web=web{site},ssh=ssh{site}"` links `tk-home-web`
-  to `webhome.<panel domain>` and `tk-home-ssh` to
-  `sshhome.<panel domain>`. Requests arriving at the monitor with that
-  host label are reverse-proxied to the client's lowest forwarded port. Empty
-  (default) = no links, no host-based proxying. This pattern is only a
-  convenience: a client can instead be given its main URL explicitly in
-  `clients.json` (`host`), whatever its name, and that wins over the template.
-- `TK_SERVER_LINK_BACKUP_SUFFIX` (optional, e.g. `-b`) — also offer, for each
-  client, a **backup** link to the sibling client of the same site (other
-  role) reached through this one, at `<sibling label><suffix>`. Useful when
-  two devices at a site (e.g. an application server and its router) forward
-  each other's SSH/web as a fallback.
 
 The `/data` volume holds `host_key`, `authorized_keys` and `traffic.json`.
 
@@ -250,15 +234,14 @@ and how the server frees ports after dirty client drops.
 
 ### Naming clients and ports
 
-By default the panel shows each client by its key comment (`tk-site1-web`) and its
+By default the panel shows each client by its key comment (`site1-web`) and its
 ports as bare numbers. An optional `clients.json` next to `authorized_keys` gives
 them readable names and, optionally, the URL each service is expected to answer on:
 
 ```json
 {
-  "tk-site1-web": {
+  "site1-web": {
     "title": "Site 1 - web server",
-    "host": "site1",
     "ports": {
       "8080": { "name": "Web UI", "url": "https://web.site1.example.com" },
       "8048": { "name": "Metrics" }
@@ -273,10 +256,10 @@ them readable names and, optionally, the URL each service is expected to answer 
   The dialog opened by the **ON** badge lists every port, sorted by number, with its
   URL (if any), a Test button and a check on the default. No naming pattern and no
   extra flag are needed.
-- `host` (optional) is a subdomain label under the panel's own domain
-  (`site1` → `site1.<panel domain>`): requests arriving with it are reverse-proxied
-  to the client's default port (else its lowest forwarded port). It wins over `TK_SERVER_LINKS`,
-  which is only a default for clients without `host`. Labels must be unique.
+- The **host of each port's URL** is also what the monitor reverse-proxies: a request
+  that reaches the monitor with that `Host` (e.g. through your ingress proxy) is forwarded
+  to that port, so a client's ports may use different hosts. No extra field, nothing to
+  keep in sync with the URLs.
 - `title` replaces the client name in the table (the technical name stays visible
   under it). `ports` maps a port number to a `name` and an optional `url`.
 - It is presentation only: **access control stays in `authorized_keys`**. A port not
@@ -326,7 +309,7 @@ scrape_configs:
 Install the package and configure it via UCI:
 
 ```bash
-opkg install tunnelkit_0.2.6-1_<arch>.ipk
+opkg install tunnelkit_0.2.7-1_<arch>.ipk
 # edit /etc/config/tunnelkit
 /etc/init.d/tunnelkit enable
 /etc/init.d/tunnelkit start

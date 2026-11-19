@@ -9,28 +9,28 @@ import (
 
 func TestWritePromTrafficAndUp(t *testing.T) {
 	store := NewTrafficStore(filepath.Join(t.TempDir(), "t.json"))
-	store.Add("tk-a", 8140, 100, 0)
-	store.Add("tk-a", 8140, 0, 250)
-	store.Add("tk-off", 9000, 7, 0)
-	store.Touch("tk-off")
+	store.Add("a", 8140, 100, 0)
+	store.Add("a", 8140, 0, 250)
+	store.Add("off", 9000, 7, 0)
+	store.Touch("off")
 	reg := NewRegistry()
-	reg.Add("id1", &Client{Name: "tk-a", IP: "1.2.3.4"})
+	reg.Add("id1", &Client{Name: "a", IP: "1.2.3.4"})
 
 	var b bytes.Buffer
 	writeProm(&b, reg, store, nil)
 	out := b.String()
 	for _, want := range []string{
-		`tunnelkit_client_up{client="tk-a",title=""} 1`,
-		`tunnelkit_client_up{client="tk-off",title=""} 0`,
-		`tunnelkit_traffic_bytes_total{client="tk-a",title="",port="8140",service="",direction="tx"} 100`,
-		`tunnelkit_traffic_bytes_total{client="tk-a",title="",port="8140",service="",direction="rx"} 250`,
-		`tunnelkit_traffic_bytes_total{client="tk-off",title="",port="9000",service="",direction="tx"} 7`,
+		`tunnelkit_client_up{client="a",title=""} 1`,
+		`tunnelkit_client_up{client="off",title=""} 0`,
+		`tunnelkit_traffic_bytes_total{client="a",title="",port="8140",service="",direction="tx"} 100`,
+		`tunnelkit_traffic_bytes_total{client="a",title="",port="8140",service="",direction="rx"} 250`,
+		`tunnelkit_traffic_bytes_total{client="off",title="",port="9000",service="",direction="tx"} 7`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, `uptime_seconds{client="tk-off"`) {
+	if strings.Contains(out, `uptime_seconds{client="off"`) {
 		t.Error("offline client must not report session gauges")
 	}
 }

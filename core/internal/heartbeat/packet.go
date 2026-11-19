@@ -45,7 +45,7 @@ func sign(key []byte, head []byte) []byte {
 	return m.Sum(nil)[:macLen]
 }
 
-// validName keeps names to what a client name looks like (tk-site-role).
+// validName keeps names to what a client name looks like (site-role).
 func validName(n string) bool {
 	if n == "" || len(n) > nameLen {
 		return false
