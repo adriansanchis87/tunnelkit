@@ -260,19 +260,20 @@ them readable names and, optionally, the URL each service is expected to answer 
     "title": "Site 1 - web server",
     "host": "site1",
     "ports": {
-      "8080": { "name": "Web UI", "url": "https://web.site1.example.com", "default": true },
+      "8080": { "name": "Web UI", "url": "https://web.site1.example.com" },
       "8048": { "name": "Metrics" }
     }
   }
 }
 ```
 
-- Each port has an optional `url`. Mark **one** port `"default": true` and its URL is
-  what clicking the client's name opens in the panel; the dialog opened by the **ON**
-  badge lists every port with its URL (if any). No naming pattern is needed.
+- Each port has an optional `url`. The **first port in the list with an `http(s)` URL**
+  (lowest port number) is the client's *default*: clicking the client's name opens its
+  URL. The dialog opened by the **ON** badge lists every port with its URL (if any)
+  and marks the default. No naming pattern and no extra flag are needed.
 - `host` (optional) is a subdomain label under the panel's own domain
   (`site1` → `site1.<panel domain>`): requests arriving with it are reverse-proxied
-  to the client's default port (else its lowest). It wins over `TK_SERVER_LINKS`,
+  to the client's default port (else its lowest forwarded port). It wins over `TK_SERVER_LINKS`,
   which is only a default for clients without `host`. Labels must be unique.
 - `title` replaces the client name in the table (the technical name stays visible
   under it). `ports` maps a port number to a `name` and an optional `url`.

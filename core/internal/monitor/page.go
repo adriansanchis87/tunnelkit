@@ -66,9 +66,10 @@ function safeHref(u){return /^https?:\/\//i.test(u||'')?u:'';}
 // each is a subdomain label, completed here with the panel's own parent domain.
 function linkUrl(host){var p=location.host.split('.');if(p.length<2||!host)return '';return location.protocol+'//'+host+'.'+p.slice(1).join('.');}
 function mainUrl(c){var l=(c.links||[]).find(x=>x.kind==='main');return l?linkUrl(l.host):'';}
-// What the client's name opens: the URL of its default port; for clients with no
-// default port, the older TK_SERVER_LINKS address (if any).
-function nameUrl(c){var d=(c.port_info||[]).find(p=>p.default&&safeHref(p.url));return d?d.url:mainUrl(c);}
+// The default port is the first one in the list with an http(s) URL; its URL is
+// what the client's name opens. With none, the older TK_SERVER_LINKS address.
+function defPort(c){var d=(c.port_info||[]).find(p=>safeHref(p.url));return d?d.port:0;}
+function nameUrl(c){var d=(c.port_info||[]).find(p=>p.port===defPort(c));return d?d.url:mainUrl(c);}
 function spark(vals,w,h,color){
   if(!vals||!vals.length)return '<svg width="'+w+'" height="'+h+'"></svg>';
   const max=Math.max(1,...vals);const dx=w/Math.max(1,vals.length-1);
@@ -142,12 +143,12 @@ function openLinks(name){
     html+='<table><tr><th>Port</th><th>Service</th><th>URL</th><th>Check</th></tr>';
     pi.forEach(p=>{
       const fwd=(c.ports||[]).indexOf(p.port)>=0;
-      const def=!!p.default;
+      const def=p.port===defPort(c);
       const u=p.url||'';
       const href=safeHref(u);
       const url=!u?'<span class="muted">-</span>':(href?'<a class="svc" href="'+esc(href)+'" target="_blank" rel="noopener">'+esc(u.replace(/^https?:\/\//i,''))+'</a>':'<span class="mono">'+esc(u)+'</span>');
       const chk=fwd?'<button onclick="probePort('+A(name)+','+p.port+',this)">Test</button> <span id="pr'+p.port+'" class="mono"></span>':'<span class="muted">not forwarded now</span>';
-      const tag=def?' <span class="muted" style="font-size:.7rem;border:1px solid var(--border);border-radius:4px;padding:0 .3rem" title="default: its URL is what the client name opens">default</span>':'';
+      const tag=def?' <span class="muted" style="font-size:.7rem;border:1px solid var(--border);border-radius:4px;padding:0 .3rem" title="default: its URL opens from the client name">default</span>':'';
       html+='<tr><td class="mono">'+p.port+tag+'</td><td>'+(p.name?esc(p.name):'<span class="muted">-</span>')+'</td><td>'+url+'</td><td style="white-space:normal">'+chk+'</td></tr>';});
     html+='</table>';}
   else html+='<div class="muted">nothing to show: no forwarded ports (see clients.json)</div>';

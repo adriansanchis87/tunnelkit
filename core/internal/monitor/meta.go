@@ -39,10 +39,6 @@ const (
 type PortMeta struct {
 	Name string `json:"name,omitempty"`
 	URL  string `json:"url,omitempty"` // expected URL of the service (optional)
-	// Default marks the client's main port: its URL is what the client's name
-	// opens in the panel, and it is the port the panel serves at the client's
-	// host label. At most one per client.
-	Default bool `json:"default,omitempty"`
 }
 
 // ClientMeta describes one client.
@@ -89,15 +85,24 @@ func (m *MetaStore) Port(name string, port uint32) PortMeta {
 	return m.Get(name).Ports[strconv.FormatUint(uint64(port), 10)]
 }
 
-// DefaultPort returns the client's port marked default (0 when none).
+// DefaultPort is the client's default port: the lowest-numbered port that has
+// an http(s) URL (0 when none). Its URL is what the client's name opens in the
+// panel and the port the panel serves at the client's host label.
 func (m *MetaStore) DefaultPort(name string) int {
 	best := 0
 	for k, p := range m.Get(name).Ports {
-		if n, err := strconv.Atoi(k); err == nil && p.Default && (best == 0 || n < best) {
-			best = n
+		n, err := strconv.Atoi(k)
+		if err != nil || !isWebURL(p.URL) || (best != 0 && n >= best) {
+			continue
 		}
+		best = n
 	}
 	return best
+}
+
+func isWebURL(u string) bool {
+	l := strings.ToLower(u)
+	return strings.HasPrefix(l, "http://") || strings.HasPrefix(l, "https://")
 }
 
 // Title returns the display title of a client, falling back to its name.
@@ -156,7 +161,6 @@ func sanitize(in map[string]ClientMeta, warn func(string)) map[string]ClientMeta
 	}
 	sort.Strings(names)
 	hosts := map[string]string{} // label -> client that owns it
-	defaults := map[string]int{} // client -> its default port
 	for _, name := range names {
 		c := in[name]
 		oc := ClientMeta{Title: clip(c.Title, maxTitleLen)}
@@ -177,13 +181,6 @@ func sanitize(in map[string]ClientMeta, warn func(string)) map[string]ClientMeta
 				continue
 			}
 			op := PortMeta{Name: clip(p.Name, maxNameLen)}
-			if p.Default {
-				if first := defaults[name]; first != 0 && first != port {
-					warn(name + ": port " + key + " is also marked default (port " + strconv.Itoa(first) + " already is); ignored")
-				} else {
-					op.Default, defaults[name] = true, port
-				}
-			}
 			if u := strings.TrimSpace(p.URL); u != "" {
 				if cleanURL(u) == "" {
 					warn(name + ": port " + key + ": url must be http://, https://, tcp:// or ssh:// with a host; ignored")

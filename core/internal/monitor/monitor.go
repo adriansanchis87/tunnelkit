@@ -246,8 +246,6 @@ type portInfo struct {
 	Port uint32 `json:"port"`
 	Name string `json:"name,omitempty"`
 	URL  string `json:"url,omitempty"` // expected URL (http, https, tcp or ssh)
-	// Default marks the client's main port (the URL its name opens).
-	Default bool `json:"default,omitempty"`
 }
 
 type row struct {
@@ -421,13 +419,13 @@ func describe(r *row, meta *MetaStore) {
 	seen := map[uint32]bool{}
 	for _, p := range r.Ports {
 		pm := meta.Port(r.Name, p)
-		r.PortInfo = append(r.PortInfo, portInfo{Port: p, Name: pm.Name, URL: pm.URL, Default: pm.Default})
+		r.PortInfo = append(r.PortInfo, portInfo{Port: p, Name: pm.Name, URL: pm.URL})
 		seen[p] = true
 	}
 	for k, pm := range m.Ports {
 		var n uint32
 		if _, err := fmt.Sscanf(k, "%d", &n); err == nil && !seen[n] {
-			r.PortInfo = append(r.PortInfo, portInfo{Port: n, Name: pm.Name, URL: pm.URL, Default: pm.Default})
+			r.PortInfo = append(r.PortInfo, portInfo{Port: n, Name: pm.Name, URL: pm.URL})
 		}
 	}
 	sort.Slice(r.PortInfo, func(i, j int) bool { return r.PortInfo[i].Port < r.PortInfo[j].Port })

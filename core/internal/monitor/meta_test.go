@@ -197,33 +197,23 @@ func TestMainPortPrefersMetaPort(t *testing.T) {
 	}
 }
 
-func TestDefaultPortFromMeta(t *testing.T) {
+func TestDefaultPortIsFirstPortWithWebURL(t *testing.T) {
 	m := NewMetaStore(writeMeta(t, t.TempDir(), `{
 	  "tk-a-web": {"ports": {
+	    "8044": {"name": "SSH", "url": "ssh://h.example.com"},
 	    "8040": {"name": "Router"},
-	    "8041": {"name": "Other web", "url": "https://x.example.com", "default": true},
-	    "8044": {"name": "SSH", "default": true}
+	    "8042": {"name": "Other web", "url": "https://x.example.com"},
+	    "8041": {"name": "Stats", "url": "http://y.example.com"}
 	  }},
 	  "tk-b-web": {"ports": {"9000": {"name": "Web"}}}
 	}`))
 	if got := m.DefaultPort("tk-a-web"); got != 8041 {
-		t.Errorf("default port = %d, want 8041 (a second default is ignored)", got)
-	}
-	if m.Port("tk-a-web", 8044).Default {
-		t.Error("only one default per client")
+		t.Errorf("default port = %d, want 8041 (lowest port with an http(s) URL)", got)
 	}
 	if got := m.DefaultPort("tk-b-web"); got != 0 {
-		t.Errorf("no default configured = %d, want 0", got)
+		t.Errorf("no URL = %d, want 0", got)
 	}
-	r := row{Name: "tk-a-web", Ports: []uint32{8040, 8041, 8044}}
-	describe(&r, m)
-	var flagged []uint32
-	for _, p := range r.PortInfo {
-		if p.Default {
-			flagged = append(flagged, p.Port)
-		}
-	}
-	if len(flagged) != 1 || flagged[0] != 8041 {
-		t.Errorf("port_info default flags = %v, want [8041]", flagged)
+	if got := m.DefaultPort("tk-unknown"); got != 0 {
+		t.Errorf("unknown client = %d, want 0", got)
 	}
 }
