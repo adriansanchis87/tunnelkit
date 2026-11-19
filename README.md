@@ -302,12 +302,31 @@ uptime, reconnections, last error), traffic with a per-port and per-day
 breakdown, and a speedtest button. The speedtest runs client↔server through the
 tunnel using 8 parallel streams, so it reports the real tunnel throughput.
 
+### Prometheus / Grafana
+
+The same address also serves `GET /metrics` in the Prometheus text format (no
+authentication of its own: scrape it over an internal network and keep the
+published panel behind your auth proxy). Series, per client (`client`, `title`):
+
+- `tunnelkit_client_up`, `tunnelkit_client_uptime_seconds`,
+  `tunnelkit_client_reconnects`, `tunnelkit_client_latency_ms`,
+  `tunnelkit_client_active_connections`, `tunnelkit_client_availability_24h_ratio`
+- `tunnelkit_client_speedtest_mbps{direction="down|up"}`: last speedtest
+- `tunnelkit_traffic_bytes_total{port,service,direction="tx|rx"}`: a counter that
+  survives client reconnects and server restarts, so `rate()` / `increase()` work.
+
+```yaml
+scrape_configs:
+  - job_name: tunnelkit
+    static_configs: [{targets: ['tunnelkit-server:9090']}]
+```
+
 ### OpenWrt
 
 Install the package and configure it via UCI:
 
 ```bash
-opkg install tunnelkit_0.2.5-1_<arch>.ipk
+opkg install tunnelkit_0.2.6-1_<arch>.ipk
 # edit /etc/config/tunnelkit
 /etc/init.d/tunnelkit enable
 /etc/init.d/tunnelkit start
