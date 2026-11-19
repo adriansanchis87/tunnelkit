@@ -259,7 +259,6 @@ them readable names and, optionally, the URL each service is expected to answer 
   "tk-site1-web": {
     "title": "Site 1 - web server",
     "host": "site1",
-    "main_port": 8080,
     "ports": {
       "8080": { "name": "Web UI", "url": "https://web.site1.example.com" },
       "8048": { "name": "Metrics" }
@@ -268,13 +267,16 @@ them readable names and, optionally, the URL each service is expected to answer 
 }
 ```
 
-- `host` (optional) is the **main URL** of the client: a single subdomain label
-  under the panel's own domain (`site1` → `site1.<panel domain>`). It needs no
-  particular client name and wins over `TK_SERVER_LINKS`, which becomes just a
-  default for clients that have no `host`. Requests arriving with that host label
-  are reverse-proxied to the client. Labels must be unique (a duplicate is ignored
-  and logged). `main_port` (optional) picks which forwarded port is served there;
-  by default, the lowest one.
+- Each port has an optional `url`. The **first port in the file's `ports` list that
+  has an `http(s)` URL** is the client's *default*: clicking the client's name opens
+  its URL. You choose it by ordering the list (move a port up to make it the default).
+  The dialog opened by the **ON** badge lists every port, sorted by number, with its
+  URL (if any), a Test button and a check on the default. No naming pattern and no
+  extra flag are needed.
+- `host` (optional) is a subdomain label under the panel's own domain
+  (`site1` → `site1.<panel domain>`): requests arriving with it are reverse-proxied
+  to the client's default port (else its lowest forwarded port). It wins over `TK_SERVER_LINKS`,
+  which is only a default for clients without `host`. Labels must be unique.
 - `title` replaces the client name in the table (the technical name stays visible
   under it). `ports` maps a port number to a `name` and an optional `url`.
 - It is presentation only: **access control stays in `authorized_keys`**. A port not
@@ -305,7 +307,7 @@ tunnel using 8 parallel streams, so it reports the real tunnel throughput.
 Install the package and configure it via UCI:
 
 ```bash
-opkg install tunnelkit_0.2.4-1_<arch>.ipk
+opkg install tunnelkit_0.2.5-1_<arch>.ipk
 # edit /etc/config/tunnelkit
 /etc/init.d/tunnelkit enable
 /etc/init.d/tunnelkit start

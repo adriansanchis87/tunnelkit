@@ -246,6 +246,9 @@ type portInfo struct {
 	Port uint32 `json:"port"`
 	Name string `json:"name,omitempty"`
 	URL  string `json:"url,omitempty"` // expected URL (http, https, tcp or ssh)
+	// Default marks the client's default port: the first one in clients.json's
+	// list with an http(s) URL. Its URL is what the client's name opens.
+	Default bool `json:"default,omitempty"`
 }
 
 type row struct {
@@ -416,16 +419,17 @@ func (c *Client) row() row {
 func describe(r *row, meta *MetaStore) {
 	m := meta.Get(r.Name)
 	r.Title = m.Title
+	def := uint32(meta.DefaultPort(r.Name))
 	seen := map[uint32]bool{}
 	for _, p := range r.Ports {
 		pm := meta.Port(r.Name, p)
-		r.PortInfo = append(r.PortInfo, portInfo{Port: p, Name: pm.Name, URL: pm.URL})
+		r.PortInfo = append(r.PortInfo, portInfo{Port: p, Name: pm.Name, URL: pm.URL, Default: p == def})
 		seen[p] = true
 	}
 	for k, pm := range m.Ports {
 		var n uint32
 		if _, err := fmt.Sscanf(k, "%d", &n); err == nil && !seen[n] {
-			r.PortInfo = append(r.PortInfo, portInfo{Port: n, Name: pm.Name, URL: pm.URL})
+			r.PortInfo = append(r.PortInfo, portInfo{Port: n, Name: pm.Name, URL: pm.URL, Default: n == def})
 		}
 	}
 	sort.Slice(r.PortInfo, func(i, j int) bool { return r.PortInfo[i].Port < r.PortInfo[j].Port })
@@ -652,7 +656,7 @@ func Serve(addr string, reg *Registry, store *TrafficStore, links LinkConfig, me
 		if label != "" {
 			for _, c := range reg.list() {
 				if links.mainHost(c.Name) == label {
-					port := mainPort(c, meta.Get(c.Name).MainPort)
+					port := mainPort(c, meta.DefaultPort(c.Name))
 					if port == 0 {
 						http.Error(w, "client has no forwarded service", http.StatusBadGateway)
 						return
@@ -691,13 +695,17 @@ func onlyAlnum(s string) string {
 func mainPort(c *Client, preferred int) uint32 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for _, p := range c.ports {
+	return pickMain(c.ports, preferred)
+}
+
+// pickMain is the preferred port when it is forwarded, else the lowest one
+// (0 when nothing is forwarded).
+func pickMain(ports []uint32, preferred int) uint32 {
+	var m uint32
+	for _, p := range ports {
 		if preferred > 0 && p == uint32(preferred) {
 			return p
 		}
-	}
-	var m uint32
-	for _, p := range c.ports {
 		if m == 0 || p < m {
 			m = p
 		}
