@@ -7,12 +7,13 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
-- **One list per client: its ports, each with an optional URL.** The first port with
-  an `http(s)` URL (lowest port number) is the client's default: its URL is what the
-  client's name opens in the panel. The dialog opened by **ON** lists every port with
-  its URL and a Test button and marks the default; the separate "Web links" list is
-  gone. This replaces `main_port` (0.2.2), which is removed. The default port is also
-  the one served at the client's `host`.
+- **One list per client: its ports, each with an optional URL.** The first port **in
+  the order of `clients.json`** with an `http(s)` URL is the client's default: its URL
+  is what the client's name opens in the panel, so you pick it by ordering the list.
+  The dialog opened by **ON** lists every port sorted by number, with its URL, a Test
+  button and a check on the default; the separate "Web links" list is gone. This
+  replaces `main_port` (0.2.2), which is removed. The default port is also the one
+  served at the client's `host`.
 
 ## [0.2.4] - 2026-11-17
 

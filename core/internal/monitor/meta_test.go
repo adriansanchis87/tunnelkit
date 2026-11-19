@@ -197,23 +197,47 @@ func TestMainPortPrefersMetaPort(t *testing.T) {
 	}
 }
 
-func TestDefaultPortIsFirstPortWithWebURL(t *testing.T) {
+func TestDefaultPortIsFirstInFileWithWebURL(t *testing.T) {
 	m := NewMetaStore(writeMeta(t, t.TempDir(), `{
-	  "tk-a-web": {"ports": {
+	  "tk-a-web": {"title": "A", "ports": {
 	    "8044": {"name": "SSH", "url": "ssh://h.example.com"},
 	    "8040": {"name": "Router"},
 	    "8042": {"name": "Other web", "url": "https://x.example.com"},
 	    "8041": {"name": "Stats", "url": "http://y.example.com"}
 	  }},
-	  "tk-b-web": {"ports": {"9000": {"name": "Web"}}}
+	  "tk-b-web": {"ports": {"9000": {"name": "Web"}}},
+	  "tk-c-web": {"ports": {
+	    "9102": {"url": "http://c2.example.com"},
+	    "9100": {"url": "http://c0.example.com"}
+	  }}
 	}`))
-	if got := m.DefaultPort("tk-a-web"); got != 8041 {
-		t.Errorf("default port = %d, want 8041 (lowest port with an http(s) URL)", got)
+	if got := m.DefaultPort("tk-a-web"); got != 8042 {
+		t.Errorf("default port = %d, want 8042 (first in the file with an http(s) URL, not the lowest number)", got)
+	}
+	if got := m.DefaultPort("tk-c-web"); got != 9102 {
+		t.Errorf("default port = %d, want 9102 (file order)", got)
 	}
 	if got := m.DefaultPort("tk-b-web"); got != 0 {
 		t.Errorf("no URL = %d, want 0", got)
 	}
 	if got := m.DefaultPort("tk-unknown"); got != 0 {
 		t.Errorf("unknown client = %d, want 0", got)
+	}
+	// the panel lists ports by number and flags the default
+	r := row{Name: "tk-a-web", Ports: []uint32{8040, 8041, 8042, 8044}}
+	describe(&r, m)
+	var nums []uint32
+	var flagged []uint32
+	for _, p := range r.PortInfo {
+		nums = append(nums, p.Port)
+		if p.Default {
+			flagged = append(flagged, p.Port)
+		}
+	}
+	if len(nums) != 4 || nums[0] != 8040 || nums[3] != 8044 {
+		t.Errorf("port_info must be sorted by port: %v", nums)
+	}
+	if len(flagged) != 1 || flagged[0] != 8042 {
+		t.Errorf("default flags = %v, want [8042]", flagged)
 	}
 }
