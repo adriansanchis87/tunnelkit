@@ -7,10 +7,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
-- The ON dialog has **one list: the ports**, each with its URL if it has one and a
-  Test button. The separate "Web links" list is gone: the client's main URL now
-  appears on its **default** port (marked `default`: `main_port` from `clients.json`,
-  else the lowest forwarded port). `/api/status` rows carry `main_port`.
+- **One list per client: its ports, each with an optional URL.** Mark one port
+  `"default": true` in `clients.json` and its URL is what the client's name opens in
+  the panel. The dialog opened by **ON** lists every port with its URL and a Test
+  button; the separate "Web links" list is gone. This replaces `main_port` (0.2.2),
+  which is removed; the default port is also the one served at the client's `host`.
 
 ## [0.2.4] - 2026-11-17
 

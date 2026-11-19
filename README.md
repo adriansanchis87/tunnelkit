@@ -259,22 +259,21 @@ them readable names and, optionally, the URL each service is expected to answer 
   "tk-site1-web": {
     "title": "Site 1 - web server",
     "host": "site1",
-    "main_port": 8080,
     "ports": {
-      "8080": { "name": "Web UI", "url": "https://web.site1.example.com" },
+      "8080": { "name": "Web UI", "url": "https://web.site1.example.com", "default": true },
       "8048": { "name": "Metrics" }
     }
   }
 }
 ```
 
-- `host` (optional) is the **main URL** of the client: a single subdomain label
-  under the panel's own domain (`site1` → `site1.<panel domain>`). It needs no
-  particular client name and wins over `TK_SERVER_LINKS`, which becomes just a
-  default for clients that have no `host`. Requests arriving with that host label
-  are reverse-proxied to the client. Labels must be unique (a duplicate is ignored
-  and logged). `main_port` (optional) picks which forwarded port is served there;
-  by default, the lowest one.
+- Each port has an optional `url`. Mark **one** port `"default": true` and its URL is
+  what clicking the client's name opens in the panel; the dialog opened by the **ON**
+  badge lists every port with its URL (if any). No naming pattern is needed.
+- `host` (optional) is a subdomain label under the panel's own domain
+  (`site1` → `site1.<panel domain>`): requests arriving with it are reverse-proxied
+  to the client's default port (else its lowest). It wins over `TK_SERVER_LINKS`,
+  which is only a default for clients without `host`. Labels must be unique.
 - `title` replaces the client name in the table (the technical name stays visible
   under it). `ports` maps a port number to a `name` and an optional `url`.
 - It is presentation only: **access control stays in `authorized_keys`**. A port not

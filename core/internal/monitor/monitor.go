@@ -246,13 +246,14 @@ type portInfo struct {
 	Port uint32 `json:"port"`
 	Name string `json:"name,omitempty"`
 	URL  string `json:"url,omitempty"` // expected URL (http, https, tcp or ssh)
+	// Default marks the client's main port (the URL its name opens).
+	Default bool `json:"default,omitempty"`
 }
 
 type row struct {
 	Name         string     `json:"name"`
 	Title        string     `json:"title,omitempty"`     // display title from clients.json
 	PortInfo     []portInfo `json:"port_info,omitempty"` // ports with their names / expected URLs
-	MainPort     uint32     `json:"main_port,omitempty"` // the default port (served at the main URL)
 	Connected    bool       `json:"connected"`
 	IP           string     `json:"ip"`
 	Ports        []uint32   `json:"ports"`
@@ -417,17 +418,16 @@ func (c *Client) row() row {
 func describe(r *row, meta *MetaStore) {
 	m := meta.Get(r.Name)
 	r.Title = m.Title
-	r.MainPort = pickMain(r.Ports, m.MainPort)
 	seen := map[uint32]bool{}
 	for _, p := range r.Ports {
 		pm := meta.Port(r.Name, p)
-		r.PortInfo = append(r.PortInfo, portInfo{Port: p, Name: pm.Name, URL: pm.URL})
+		r.PortInfo = append(r.PortInfo, portInfo{Port: p, Name: pm.Name, URL: pm.URL, Default: pm.Default})
 		seen[p] = true
 	}
 	for k, pm := range m.Ports {
 		var n uint32
 		if _, err := fmt.Sscanf(k, "%d", &n); err == nil && !seen[n] {
-			r.PortInfo = append(r.PortInfo, portInfo{Port: n, Name: pm.Name, URL: pm.URL})
+			r.PortInfo = append(r.PortInfo, portInfo{Port: n, Name: pm.Name, URL: pm.URL, Default: pm.Default})
 		}
 	}
 	sort.Slice(r.PortInfo, func(i, j int) bool { return r.PortInfo[i].Port < r.PortInfo[j].Port })
@@ -654,7 +654,7 @@ func Serve(addr string, reg *Registry, store *TrafficStore, links LinkConfig, me
 		if label != "" {
 			for _, c := range reg.list() {
 				if links.mainHost(c.Name) == label {
-					port := mainPort(c, meta.Get(c.Name).MainPort)
+					port := mainPort(c, meta.DefaultPort(c.Name))
 					if port == 0 {
 						http.Error(w, "client has no forwarded service", http.StatusBadGateway)
 						return

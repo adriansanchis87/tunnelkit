@@ -21,9 +21,8 @@ import (
 //	  "tk-site1-web": {
 //	    "title": "Site 1 - web server",
 //	    "host": "site1",        // optional: subdomain of the main URL (any name)
-//	    "main_port": 8080,      // optional: forwarded port served at that URL
 //	    "ports": {
-//	      "8080": {"name": "Web UI", "url": "https://web.site1.example.com"},
+//	      "8080": {"name": "Web UI", "url": "https://web.site1.example.com", "default": true},
 //	      "8048": {"name": "Metrics"}
 //	    }
 //	  }
@@ -40,6 +39,10 @@ const (
 type PortMeta struct {
 	Name string `json:"name,omitempty"`
 	URL  string `json:"url,omitempty"` // expected URL of the service (optional)
+	// Default marks the client's main port: its URL is what the client's name
+	// opens in the panel, and it is the port the panel serves at the client's
+	// host label. At most one per client.
+	Default bool `json:"default,omitempty"`
 }
 
 // ClientMeta describes one client.
@@ -48,10 +51,8 @@ type ClientMeta struct {
 	// Host is the subdomain label of the client's main URL (the panel appends
 	// its own parent domain). It overrides TK_SERVER_LINKS, so a client's name
 	// does not have to follow any pattern.
-	Host string `json:"host,omitempty"`
-	// MainPort is the forwarded port served at that URL; default: the lowest.
-	MainPort int                 `json:"main_port,omitempty"`
-	Ports    map[string]PortMeta `json:"ports,omitempty"`
+	Host  string              `json:"host,omitempty"`
+	Ports map[string]PortMeta `json:"ports,omitempty"`
 }
 
 // MetaStore holds the parsed file and reloads it when its mtime changes, like
@@ -86,6 +87,17 @@ func (m *MetaStore) Get(name string) ClientMeta {
 // Port returns the metadata of one port of a client.
 func (m *MetaStore) Port(name string, port uint32) PortMeta {
 	return m.Get(name).Ports[strconv.FormatUint(uint64(port), 10)]
+}
+
+// DefaultPort returns the client's port marked default (0 when none).
+func (m *MetaStore) DefaultPort(name string) int {
+	best := 0
+	for k, p := range m.Get(name).Ports {
+		if n, err := strconv.Atoi(k); err == nil && p.Default && (best == 0 || n < best) {
+			best = n
+		}
+	}
+	return best
 }
 
 // Title returns the display title of a client, falling back to its name.
@@ -144,6 +156,7 @@ func sanitize(in map[string]ClientMeta, warn func(string)) map[string]ClientMeta
 	}
 	sort.Strings(names)
 	hosts := map[string]string{} // label -> client that owns it
+	defaults := map[string]int{} // client -> its default port
 	for _, name := range names {
 		c := in[name]
 		oc := ClientMeta{Title: clip(c.Title, maxTitleLen)}
@@ -157,16 +170,6 @@ func sanitize(in map[string]ClientMeta, warn func(string)) map[string]ClientMeta
 				hosts[h], oc.Host = name, h
 			}
 		}
-		if c.MainPort != 0 {
-			if c.MainPort < 1 || c.MainPort > 65535 {
-				warn(name + ": main_port " + strconv.Itoa(c.MainPort) + " is not a valid port; ignored")
-			} else {
-				oc.MainPort = c.MainPort
-			}
-		}
-		if c.Title != oc.Title {
-			warn(name + ": title is longer than " + strconv.Itoa(maxTitleLen) + " characters, truncated")
-		}
 		for key, p := range c.Ports {
 			port, err := strconv.Atoi(strings.TrimSpace(key))
 			if err != nil || port < 1 || port > 65535 {
@@ -174,6 +177,13 @@ func sanitize(in map[string]ClientMeta, warn func(string)) map[string]ClientMeta
 				continue
 			}
 			op := PortMeta{Name: clip(p.Name, maxNameLen)}
+			if p.Default {
+				if first := defaults[name]; first != 0 && first != port {
+					warn(name + ": port " + key + " is also marked default (port " + strconv.Itoa(first) + " already is); ignored")
+				} else {
+					op.Default, defaults[name] = true, port
+				}
+			}
 			if u := strings.TrimSpace(p.URL); u != "" {
 				if cleanURL(u) == "" {
 					warn(name + ": port " + key + ": url must be http://, https://, tcp:// or ssh:// with a host; ignored")

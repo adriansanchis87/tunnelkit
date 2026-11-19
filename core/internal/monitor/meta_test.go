@@ -142,11 +142,11 @@ func TestDescribe(t *testing.T) {
 
 func TestMainHostFromMetaNeedsNoPattern(t *testing.T) {
 	p := writeMeta(t, t.TempDir(), `{
-	  "argos@example.com": {"host": "Argos", "main_port": 8241},
+	  "argos@example.com": {"host": "Argos"},
 	  "tk-a-web": {"host": "my-site"},
 	  "tk-b-web": {"host": "my-site"},
 	  "tk-c-web": {"host": "not a label!"},
-	  "tk-d-web": {"main_port": 70000}
+	  "tk-d-web": {}
 	}`)
 	m := NewMetaStore(p)
 	lc := ParseLinkConfig("web=web{site}", "")
@@ -165,8 +165,8 @@ func TestMainHostFromMetaNeedsNoPattern(t *testing.T) {
 	if got := lc.mainHost("tk-c-web"); got != "webc" {
 		t.Errorf("invalid host should fall back to the template, got %q", got)
 	}
-	if got := lc.mainHost("tk-d-web"); got != "webd" || m.Get("tk-d-web").MainPort != 0 {
-		t.Errorf("invalid main_port must be dropped, got host %q meta %+v", got, m.Get("tk-d-web"))
+	if got := lc.mainHost("tk-d-web"); got != "webd" {
+		t.Errorf("client without host uses the template, got %q", got)
 	}
 	// no template and no meta -> no main URL, as before
 	if got := lc.mainHost("tk-x-ssh"); got != "" {
@@ -197,20 +197,33 @@ func TestMainPortPrefersMetaPort(t *testing.T) {
 	}
 }
 
-func TestPickMainAndDescribeMainPort(t *testing.T) {
-	if got := pickMain([]uint32{8242, 8240, 8241}, 0); got != 8240 {
-		t.Errorf("lowest = %d", got)
+func TestDefaultPortFromMeta(t *testing.T) {
+	m := NewMetaStore(writeMeta(t, t.TempDir(), `{
+	  "tk-a-web": {"ports": {
+	    "8040": {"name": "Router"},
+	    "8041": {"name": "Other web", "url": "https://x.example.com", "default": true},
+	    "8044": {"name": "SSH", "default": true}
+	  }},
+	  "tk-b-web": {"ports": {"9000": {"name": "Web"}}}
+	}`))
+	if got := m.DefaultPort("tk-a-web"); got != 8041 {
+		t.Errorf("default port = %d, want 8041 (a second default is ignored)", got)
 	}
-	if got := pickMain([]uint32{8242, 8240, 8241}, 8241); got != 8241 {
-		t.Errorf("preferred = %d", got)
+	if m.Port("tk-a-web", 8044).Default {
+		t.Error("only one default per client")
 	}
-	if got := pickMain(nil, 8241); got != 0 {
-		t.Errorf("none = %d", got)
+	if got := m.DefaultPort("tk-b-web"); got != 0 {
+		t.Errorf("no default configured = %d, want 0", got)
 	}
-	m := NewMetaStore(writeMeta(t, t.TempDir(), `{"tk-a-web":{"main_port":8241}}`))
-	r := row{Name: "tk-a-web", Ports: []uint32{8240, 8241}}
+	r := row{Name: "tk-a-web", Ports: []uint32{8040, 8041, 8044}}
 	describe(&r, m)
-	if r.MainPort != 8241 {
-		t.Errorf("row main port = %d", r.MainPort)
+	var flagged []uint32
+	for _, p := range r.PortInfo {
+		if p.Default {
+			flagged = append(flagged, p.Port)
+		}
+	}
+	if len(flagged) != 1 || flagged[0] != 8041 {
+		t.Errorf("port_info default flags = %v, want [8041]", flagged)
 	}
 }
