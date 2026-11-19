@@ -33,10 +33,10 @@ panel (`9090`) on loopback only; do **not** expose it to the Internet as it is, 
 On the client machine (or anywhere, then copy the private key to it):
 
 ```bash
-ssh-keygen -t ed25519 -N "" -f id_tunnel -C tk-site1-web
+ssh-keygen -t ed25519 -N "" -f id_tunnel -C site1-web
 ```
 
-The **comment** (`tk-site1-web`) is the client's name: it is what the panel and
+The **comment** (`site1-web`) is the client's name: it is what the panel and
 the logs show, and a second connection with the same name replaces the first.
 Use one name per client.
 
@@ -50,7 +50,7 @@ Add one line to `data/authorized_keys`, listing every server port this client ma
 open with `permitlisten`:
 
 ```
-permitlisten="8080",permitlisten="8048",permitlisten="8047" ssh-ed25519 AAAA... tk-site1-web
+permitlisten="8080",permitlisten="8048",permitlisten="8047" ssh-ed25519 AAAA... site1-web
 ```
 
 - `8080`: the service you forward (`-R 8080:localhost:80`).
@@ -68,7 +68,7 @@ optional expected URL per port (it enables the **Test** button's HTTP check):
 
 ```json
 {
-  "tk-site1-web": {
+  "site1-web": {
     "title": "Site 1 - web server",
     "ports": {
       "8080": { "name": "Web UI", "url": "https://web.site1.example.com" },

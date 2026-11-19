@@ -62,13 +62,12 @@ function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(ch){retu
 function A(s){return esc(JSON.stringify(String(s)));}
 function T(name){const c=LAST[name];return esc((c&&c.title)||name);}
 function safeHref(u){return /^https?:\/\//i.test(u||'')?u:'';}
-// Links come from the server (/api/status "links", built from TK_SERVER_LINKS):
+// Links come from the server (/api/status "links", from each client's "host" in clients.json):
 // each is a subdomain label, completed here with the panel's own parent domain.
 function linkUrl(host){var p=location.host.split('.');if(p.length<2||!host)return '';return location.protocol+'//'+host+'.'+p.slice(1).join('.');}
 function mainUrl(c){var l=(c.links||[]).find(x=>x.kind==='main');return l?linkUrl(l.host):'';}
 // The default port (flagged by the server: the first one in clients.json with an
-// http(s) URL) gives the URL the client's name opens. With none, the older
-// TK_SERVER_LINKS address, if any.
+// http(s) URL) gives the URL the client's name opens. With none, its "host" address, if any.
 function nameUrl(c){var d=(c.port_info||[]).find(p=>p.default&&safeHref(p.url));return d?d.url:mainUrl(c);}
 function spark(vals,w,h,color){
   if(!vals||!vals.length)return '<svg width="'+w+'" height="'+h+'"></svg>';

@@ -19,7 +19,7 @@ import (
 // authorization: access control stays in authorized_keys.
 //
 //	{
-//	  "tk-site1-web": {
+//	  "site1-web": {
 //	    "title": "Site 1 - web server",
 //	    "host": "site1",        // optional: subdomain of the main URL (any name)
 //	    "ports": {
@@ -46,7 +46,7 @@ type PortMeta struct {
 type ClientMeta struct {
 	Title string `json:"title,omitempty"`
 	// Host is the subdomain label of the client's main URL (the panel appends
-	// its own parent domain). It overrides TK_SERVER_LINKS, so a client's name
+	// its own parent domain). It is the only source of the main URL: a client's name
 	// does not have to follow any pattern.
 	Host  string              `json:"host,omitempty"`
 	Ports map[string]PortMeta `json:"ports,omitempty"`

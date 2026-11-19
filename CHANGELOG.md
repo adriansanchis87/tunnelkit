@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-11-19
+
+### Removed
+- **`TK_SERVER_LINKS`, `TK_SERVER_LINK_BACKUP_SUFFIX` and the `tk-<site>-<role>` naming pattern.** The
+  main URL host of a client is now only its `host` in `clients.json`; client names are free-form.
+  Backup links in the panel are gone (they were only a shortcut).
+
 ## [0.2.6] - 2026-11-19
 
 ### Added

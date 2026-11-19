@@ -18,18 +18,18 @@ func writeMeta(t *testing.T, dir, body string) string {
 }
 
 func TestMetaLookup(t *testing.T) {
-	p := writeMeta(t, t.TempDir(), `{"tk-a-web":{"title":"Site A","ports":{"8080":{"name":"Web UI","url":"https://a.example.com"},"8048":{"name":"Metrics"}}}}`)
+	p := writeMeta(t, t.TempDir(), `{"a-web":{"title":"Site A","ports":{"8080":{"name":"Web UI","url":"https://a.example.com"},"8048":{"name":"Metrics"}}}}`)
 	m := NewMetaStore(p)
-	if got := m.Title("tk-a-web"); got != "Site A" {
+	if got := m.Title("a-web"); got != "Site A" {
 		t.Errorf("title = %q", got)
 	}
-	if got := m.Title("tk-unknown"); got != "tk-unknown" {
+	if got := m.Title("unknown"); got != "unknown" {
 		t.Errorf("fallback title = %q", got)
 	}
-	if pm := m.Port("tk-a-web", 8080); pm.Name != "Web UI" || pm.URL != "https://a.example.com" {
+	if pm := m.Port("a-web", 8080); pm.Name != "Web UI" || pm.URL != "https://a.example.com" {
 		t.Errorf("port meta = %+v", pm)
 	}
-	if pm := m.Port("tk-a-web", 9999); pm != (PortMeta{}) {
+	if pm := m.Port("a-web", 9999); pm != (PortMeta{}) {
 		t.Errorf("unknown port meta = %+v", pm)
 	}
 }
@@ -49,7 +49,7 @@ func TestMetaNoFileOrNil(t *testing.T) {
 
 func TestMetaSanitizes(t *testing.T) {
 	long := strings.Repeat("a", 500)
-	p := writeMeta(t, t.TempDir(), `{"tk-a-web":{"title":"`+long+`","ports":{
+	p := writeMeta(t, t.TempDir(), `{"a-web":{"title":"`+long+`","ports":{
 	  "8080":{"name":"`+long+`","url":"javascript:alert(1)"},
 	  "8081":{"url":"https://user:pw@example.com/"},
 	  "8082":{"url":"file:///etc/passwd"},
@@ -59,7 +59,7 @@ func TestMetaSanitizes(t *testing.T) {
 	  "70000":{"name":"x"},
 	  " 8085 ":{"name":"spaces ok"}}}}`)
 	m := NewMetaStore(p)
-	c := m.Get("tk-a-web")
+	c := m.Get("a-web")
 	if len([]rune(c.Title)) != maxTitleLen {
 		t.Errorf("title not truncated: %d", len([]rune(c.Title)))
 	}
@@ -87,36 +87,36 @@ func TestMetaSanitizes(t *testing.T) {
 
 func TestMetaReloadsAndSurvivesBadJSON(t *testing.T) {
 	dir := t.TempDir()
-	p := writeMeta(t, dir, `{"tk-a-web":{"title":"One"}}`)
+	p := writeMeta(t, dir, `{"a-web":{"title":"One"}}`)
 	m := NewMetaStore(p)
-	if m.Title("tk-a-web") != "One" {
+	if m.Title("a-web") != "One" {
 		t.Fatal("initial load")
 	}
 	// Change with a new mtime: picked up without restart.
-	writeMeta(t, dir, `{"tk-a-web":{"title":"Two"}}`)
+	writeMeta(t, dir, `{"a-web":{"title":"Two"}}`)
 	future := time.Now().Add(2 * time.Second)
 	_ = os.Chtimes(p, future, future)
-	if got := m.Title("tk-a-web"); got != "Two" {
+	if got := m.Title("a-web"); got != "Two" {
 		t.Errorf("not reloaded: %q", got)
 	}
 	// A broken edit must not wipe what was working.
 	writeMeta(t, dir, `{ this is not json`)
 	later := future.Add(2 * time.Second)
 	_ = os.Chtimes(p, later, later)
-	if got := m.Title("tk-a-web"); got != "Two" {
+	if got := m.Title("a-web"); got != "Two" {
 		t.Errorf("bad JSON wiped the metadata: %q", got)
 	}
 	// Removing the file clears it.
 	_ = os.Remove(p)
-	if got := m.Title("tk-a-web"); got != "tk-a-web" {
+	if got := m.Title("a-web"); got != "a-web" {
 		t.Errorf("removed file not cleared: %q", got)
 	}
 }
 
 func TestDescribe(t *testing.T) {
-	p := writeMeta(t, t.TempDir(), `{"tk-a-web":{"title":"Site A","ports":{"8080":{"name":"Web UI","url":"https://a.example.com"},"9000":{"name":"Not forwarded now"}}}}`)
+	p := writeMeta(t, t.TempDir(), `{"a-web":{"title":"Site A","ports":{"8080":{"name":"Web UI","url":"https://a.example.com"},"9000":{"name":"Not forwarded now"}}}}`)
 	m := NewMetaStore(p)
-	r := row{Name: "tk-a-web", Ports: []uint32{8048, 8080}}
+	r := row{Name: "a-web", Ports: []uint32{8048, 8080}}
 	describe(&r, m)
 	if r.Title != "Site A" {
 		t.Errorf("title = %q", r.Title)
@@ -133,7 +133,7 @@ func TestDescribe(t *testing.T) {
 		t.Errorf("not sorted: %+v", r.PortInfo)
 	}
 	// No metadata: ports still listed, no title.
-	r2 := row{Name: "tk-x", Ports: []uint32{1}}
+	r2 := row{Name: "x", Ports: []uint32{1}}
 	describe(&r2, nil)
 	if r2.Title != "" || len(r2.PortInfo) != 1 {
 		t.Errorf("nil meta: %+v", r2)
@@ -143,44 +143,30 @@ func TestDescribe(t *testing.T) {
 func TestMainHostFromMetaNeedsNoPattern(t *testing.T) {
 	p := writeMeta(t, t.TempDir(), `{
 	  "argos@example.com": {"host": "Argos"},
-	  "tk-a-web": {"host": "my-site"},
-	  "tk-b-web": {"host": "my-site"},
-	  "tk-c-web": {"host": "not a label!"},
-	  "tk-d-web": {}
+	  "a-web": {"host": "my-site"},
+	  "b-web": {"host": "my-site"},
+	  "c-web": {"host": "not a label!"},
+	  "d-web": {}
 	}`)
 	m := NewMetaStore(p)
-	lc := ParseLinkConfig("web=web{site}", "")
-	lc.Meta = m
 
-	if got := lc.mainHost("argos@example.com"); got != "argos" {
-		t.Errorf("explicit host on a free-form name = %q, want argos", got)
+	host := func(name string) string {
+		if l := linksFor(m, name); len(l) == 1 && l[0].Kind == "main" {
+			return l[0].Host
+		}
+		return ""
 	}
-	if got := lc.mainHost("tk-a-web"); got != "my-site" {
-		t.Errorf("explicit host must beat the template, got %q", got)
+	if got := host("argos@example.com"); got != "argos" {
+		t.Errorf("host on a free-form name = %q, want argos", got)
 	}
-	// duplicate host: the second client is ignored, falls back to its template
-	if got := lc.mainHost("tk-b-web"); got != "webb" {
-		t.Errorf("duplicate host should fall back to the template, got %q", got)
+	if got := host("a-web"); got != "my-site" {
+		t.Errorf("a-web = %q, want my-site", got)
 	}
-	if got := lc.mainHost("tk-c-web"); got != "webc" {
-		t.Errorf("invalid host should fall back to the template, got %q", got)
-	}
-	if got := lc.mainHost("tk-d-web"); got != "webd" {
-		t.Errorf("client without host uses the template, got %q", got)
-	}
-	// no template and no meta -> no main URL, as before
-	if got := lc.mainHost("tk-x-ssh"); got != "" {
-		t.Errorf("unmapped role = %q, want empty", got)
-	}
-	// a free-form name still gets a link
-	l := lc.linksFor("argos@example.com", nil)
-	if len(l) != 1 || l[0].Kind != "main" || l[0].Host != "argos" {
-		t.Errorf("links = %+v", l)
-	}
-	// works with no templates at all
-	only := LinkConfig{Meta: m}
-	if got := only.mainHost("argos@example.com"); got != "argos" {
-		t.Errorf("without TK_SERVER_LINKS = %q", got)
+	// duplicate, invalid or missing host: no link at all (no naming pattern fallback)
+	for _, n := range []string{"b-web", "c-web", "d-web", "unknown"} {
+		if got := host(n); got != "" {
+			t.Errorf("%s = %q, want no link", n, got)
+		}
 	}
 }
 
@@ -199,32 +185,32 @@ func TestMainPortPrefersMetaPort(t *testing.T) {
 
 func TestDefaultPortIsFirstInFileWithWebURL(t *testing.T) {
 	m := NewMetaStore(writeMeta(t, t.TempDir(), `{
-	  "tk-a-web": {"title": "A", "ports": {
+	  "a-web": {"title": "A", "ports": {
 	    "8044": {"name": "SSH", "url": "ssh://h.example.com"},
 	    "8040": {"name": "Router"},
 	    "8042": {"name": "Other web", "url": "https://x.example.com"},
 	    "8041": {"name": "Stats", "url": "http://y.example.com"}
 	  }},
-	  "tk-b-web": {"ports": {"9000": {"name": "Web"}}},
-	  "tk-c-web": {"ports": {
+	  "b-web": {"ports": {"9000": {"name": "Web"}}},
+	  "c-web": {"ports": {
 	    "9102": {"url": "http://c2.example.com"},
 	    "9100": {"url": "http://c0.example.com"}
 	  }}
 	}`))
-	if got := m.DefaultPort("tk-a-web"); got != 8042 {
+	if got := m.DefaultPort("a-web"); got != 8042 {
 		t.Errorf("default port = %d, want 8042 (first in the file with an http(s) URL, not the lowest number)", got)
 	}
-	if got := m.DefaultPort("tk-c-web"); got != 9102 {
+	if got := m.DefaultPort("c-web"); got != 9102 {
 		t.Errorf("default port = %d, want 9102 (file order)", got)
 	}
-	if got := m.DefaultPort("tk-b-web"); got != 0 {
+	if got := m.DefaultPort("b-web"); got != 0 {
 		t.Errorf("no URL = %d, want 0", got)
 	}
-	if got := m.DefaultPort("tk-unknown"); got != 0 {
+	if got := m.DefaultPort("unknown"); got != 0 {
 		t.Errorf("unknown client = %d, want 0", got)
 	}
 	// the panel lists ports by number and flags the default
-	r := row{Name: "tk-a-web", Ports: []uint32{8040, 8041, 8042, 8044}}
+	r := row{Name: "a-web", Ports: []uint32{8040, 8041, 8042, 8044}}
 	describe(&r, m)
 	var nums []uint32
 	var flagged []uint32
