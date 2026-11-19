@@ -18,7 +18,7 @@ request and builds the images and the OpenWrt binaries without publishing them.
 
 - Branch from `main` and open a PR against `main`.
 - Keep code, comments, docs and UI text in English; use neutral names in examples
-  and tests (`example.com`, `tk-site-web`), not names from a real deployment.
+  and tests (`example.com`, `site1-web`), not names from a real deployment.
 - Add or update tests for behaviour changes, and update the docs and the
   [CHANGELOG](CHANGELOG.md) under `[Unreleased]`.
 - Packaging that talks to a real SSH implementation (client options, known_hosts,

@@ -41,7 +41,7 @@ func newSigner(t *testing.T) ssh.Signer {
 }
 
 // startTestServer spins up the tunnel server on 127.0.0.1:0 accepting the given
-// client key with permitlisten over the given ports, all under name "tk-test".
+// client key with permitlisten over the given ports, all under name "test".
 // It returns the server address and a stop func.
 func startTestServer(t *testing.T, clientKey ssh.PublicKey, name string, ports ...uint32) (string, func()) {
 	t.Helper()
@@ -148,7 +148,7 @@ func TestEvictionReclaimsPort(t *testing.T) {
 
 	key := newSigner(t)
 	port := freePort(t)
-	addr, stop := startTestServer(t, key.PublicKey(), "tk-test", port)
+	addr, stop := startTestServer(t, key.PublicKey(), "test", port)
 	defer stop()
 
 	// Client 1 connects and forwards the port.
@@ -193,7 +193,7 @@ func TestEvictionReclaimsPort(t *testing.T) {
 func TestCleanDisconnectFreesPort(t *testing.T) {
 	key := newSigner(t)
 	port := freePort(t)
-	addr, stop := startTestServer(t, key.PublicKey(), "tk-test", port)
+	addr, stop := startTestServer(t, key.PublicKey(), "test", port)
 	defer stop()
 
 	c1, _ := dialClient(t, addr, key)
@@ -223,7 +223,7 @@ func TestServerSendsKeepalive(t *testing.T) {
 	defer setTunables(func(c *tunables) { c.KeepaliveInterval = 100 * time.Millisecond })()
 
 	key := newSigner(t)
-	addr, stop := startTestServer(t, key.PublicKey(), "tk-test")
+	addr, stop := startTestServer(t, key.PublicKey(), "test")
 	defer stop()
 
 	raw, err := net.Dial("tcp", addr)
@@ -281,7 +281,7 @@ func TestUnansweredKeepaliveClosesSession(t *testing.T) {
 
 	key := newSigner(t)
 	port := freePort(t)
-	addr, stop := startTestServer(t, key.PublicKey(), "tk-test", port)
+	addr, stop := startTestServer(t, key.PublicKey(), "test", port)
 	defer stop()
 
 	raw, err := net.Dial("tcp", addr)
@@ -350,7 +350,7 @@ func TestAnsweredKeepaliveKeepsSession(t *testing.T) {
 	})()
 
 	key := newSigner(t)
-	addr, stop := startTestServer(t, key.PublicKey(), "tk-test")
+	addr, stop := startTestServer(t, key.PublicKey(), "test")
 	defer stop()
 
 	c, _ := dialClient(t, addr, key) // ssh.Client replies to global requests
@@ -366,7 +366,7 @@ func TestAnsweredKeepaliveKeepsSession(t *testing.T) {
 func TestForwardNotAllowed(t *testing.T) {
 	key := newSigner(t)
 	allowed := freePort(t)
-	addr, stop := startTestServer(t, key.PublicKey(), "tk-test", allowed)
+	addr, stop := startTestServer(t, key.PublicKey(), "test", allowed)
 	defer stop()
 
 	c, _ := dialClient(t, addr, key)
