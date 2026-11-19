@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-11-19
+
 ### Changed
 - **One list per client: its ports, each with an optional URL.** The first port **in
   the order of `clients.json`** with an `http(s)` URL is the client's default: its URL
