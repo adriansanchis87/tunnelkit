@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-11-19
+
+### Added
+- **`/metrics` in Prometheus format on the server's monitor address**: client state,
+  latency, speedtest and per-client/per-port traffic counters, to graph in Grafana.
+
 ## [0.2.5] - 2026-11-19
 
 ### Changed

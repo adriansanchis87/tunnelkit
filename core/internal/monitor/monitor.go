@@ -544,6 +544,11 @@ func Serve(addr string, reg *Registry, store *TrafficStore, links LinkConfig, me
 			"failed_handshakes": reg.Attempts().Recent(20),
 		})
 	})
+	// Prometheus text format, scraped over the internal network.
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		writeProm(w, reg, store, meta)
+	})
 	mux.HandleFunc("/api/traffic", func(w http.ResponseWriter, req *http.Request) {
 		if store == nil {
 			http.Error(w, "no store", http.StatusNotFound)
