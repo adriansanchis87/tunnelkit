@@ -1,0 +1,619 @@
+// Package tunnelserver is tunnelkit's own tunnel SERVER: an embedded SSH server
+// that accepts reverse tunnels (-R) from clients and exposes the forwarded
+// ports. It replaces sshtunnelserver (linuxserver/openssh-server) with no
+// external image dependencies. Public-key auth with the SAME authorized_keys +
+// permitlisten="<port>" format you already used.
+package tunnelserver
+
+import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/pem"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"golang.org/x/crypto/ssh"
+
+	"github.com/adriansanchis87/tunnelkit/internal/config"
+	"github.com/adriansanchis87/tunnelkit/internal/heartbeat"
+	"github.com/adriansanchis87/tunnelkit/internal/monitor"
+)
+
+// Tunables (kept in a mutex-guarded struct so tests can shorten them while
+// goroutines of earlier sessions are still reading them).
+//
+// KeepaliveInterval: the server probes each connected client with
+// keepalive@openssh.com; if a probe fails, the session is closed and its
+// forwarded listeners are freed. This is the equivalent of OpenSSH sshd's
+// ClientAliveInterval and is what detects a client that dropped in the dirty
+// way a mobile/satellite link does (the TCP socket would otherwise linger for
+// minutes, keeping the port bound and blocking the client's reconnect).
+//
+// KeepaliveTimeout: how long a probe may go unanswered before the session is
+// closed. SendRequest(wantReply=true) has no deadline of its own, so on a link
+// that silently swallows packets (half-open: the socket looks fine, nothing
+// comes back) the probe would block until TCP gives up retransmitting, ~15 min,
+// and the forwarded port would stay bound the whole time. This is the
+// equivalent of ClientAliveInterval * ClientAliveCountMax in OpenSSH sshd.
+//
+// EvictWait: when a client reconnects, the server closes its previous (stale)
+// session and waits up to this long for that session to release its listeners,
+// so the reconnecting client reclaims its ports immediately instead of failing
+// the forward until the old TCP finally dies.
+//
+// HandshakeTimeout: a deadline for the SSH handshake so scanners / half-open
+// connections cannot pile up.
+type tunables struct {
+	KeepaliveInterval time.Duration
+	KeepaliveTimeout  time.Duration
+	EvictWait         time.Duration
+	HandshakeTimeout  time.Duration
+}
+
+var (
+	tunMu sync.RWMutex
+	tun   = tunables{
+		KeepaliveInterval: 20 * time.Second,
+		KeepaliveTimeout:  30 * time.Second,
+		EvictWait:         5 * time.Second,
+		HandshakeTimeout:  15 * time.Second,
+	}
+)
+
+// getTunables returns a consistent snapshot of the tunables.
+func getTunables() tunables {
+	tunMu.RLock()
+	defer tunMu.RUnlock()
+	return tun
+}
+
+// setTunables applies f to the tunables and returns a func restoring the
+// previous values. For tests.
+func setTunables(f func(*tunables)) (restore func()) {
+	tunMu.Lock()
+	defer tunMu.Unlock()
+	old := tun
+	f(&tun)
+	return func() {
+		tunMu.Lock()
+		defer tunMu.Unlock()
+		tun = old
+	}
+}
+
+// Run starts the SSH tunnel server (blocking).
+func Run(cfg *config.Config) error {
+	hostKey, err := loadOrCreateHostKey(cfg.ServerHostKey)
+	if err != nil {
+		return fmt.Errorf("host key: %w", err)
+	}
+	auth := &authStore{path: cfg.ServerAuthorizedKeys}
+	if _, err := auth.reload(); err != nil {
+		return fmt.Errorf("authorized_keys: %w", err)
+	}
+	log.Printf("tunnelserver: %d authorized keys, host key %s",
+		len(auth.keys), ssh.FingerprintSHA256(hostKey.PublicKey()))
+	log.Printf("tunnelserver: to pin this server on clients set TK_HOST_KEY=%q (add-on/UCI option host_key)",
+		strings.TrimSpace(string(ssh.MarshalAuthorizedKey(hostKey.PublicKey()))))
+
+	sconf := &ssh.ServerConfig{
+		PublicKeyCallback: func(_ ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+			info, ok := auth.lookup(ssh.FingerprintSHA256(key))
+			if !ok {
+				return nil, fmt.Errorf("unauthorized key")
+			}
+			return &ssh.Permissions{Extensions: map[string]string{
+				"ports": info.Ports, "name": info.Name}}, nil
+		},
+	}
+	sconf.AddHostKey(hostKey)
+
+	// Registry of connected clients + persisted traffic + web panel.
+	reg := monitor.NewRegistry()
+	store := monitor.NewTrafficStore(cfg.ServerTrafficFile)
+	if cfg.ServerMonitorAddr != "" {
+		go func() {
+			if err := monitor.Serve(cfg.ServerMonitorAddr, reg, store, monitor.NewMetaStore(cfg.ServerClientsFile)); err != nil {
+				log.Printf("monitor: %v", err)
+			}
+		}()
+		log.Printf("tunnelserver: web panel on %s", cfg.ServerMonitorAddr)
+	}
+
+	if cfg.ServerUDPAddr != "" {
+		hb := heartbeat.NewServer(cfg.HeartbeatKey)
+		if cfg.HeartbeatKey == "" {
+			log.Printf("heartbeat: WARNING no TK_UDP_KEY set, heartbeats are not authenticated")
+		}
+		hb.OnLost = func(name, ip string, ago time.Duration) {
+			log.Printf("heartbeat: UDP from %s (%s) silent for %s; TCP tunnel connected: %v",
+				name, ip, ago.Round(time.Second), reg.Connected(name))
+		}
+		hb.OnResume = func(name, ip string, gap time.Duration) {
+			log.Printf("heartbeat: UDP from %s (%s) back after %s; TCP tunnel connected: %v",
+				name, ip, gap.Round(time.Second), reg.Connected(name))
+		}
+		reg.SetHeartbeat(hb.Last)
+		go func() {
+			if err := hb.Serve(cfg.ServerUDPAddr); err != nil {
+				log.Printf("heartbeat: %v", err)
+			}
+		}()
+	}
+
+	ln, err := net.Listen("tcp", cfg.ServerSSHAddr)
+	if err != nil {
+		return err
+	}
+	log.Printf("tunnelserver: listening for SSH on %s", cfg.ServerSSHAddr)
+	mgr := newSessionManager()
+	for {
+		c, err := ln.Accept()
+		if err != nil {
+			return err
+		}
+		// TCP keepalive as a backstop under the SSH keepalive.
+		if tc, ok := c.(*net.TCPConn); ok {
+			_ = tc.SetKeepAlive(true)
+			_ = tc.SetKeepAlivePeriod(30 * time.Second)
+		}
+		go handleConn(c, sconf, reg, mgr, store)
+	}
+}
+
+// describeHandshakeErr turns a handshake error into a sentence that says what
+// was observed on the wire.
+func describeHandshakeErr(err error) string {
+	var ne net.Error
+	switch {
+	case errors.As(err, &ne) && ne.Timeout():
+		return fmt.Sprintf("no complete SSH handshake within %s (TCP connected; peer sent nothing or stalled)", getTunables().HandshakeTimeout)
+	case errors.Is(err, io.EOF):
+		return "peer closed the connection before the SSH handshake finished"
+	default:
+		return err.Error()
+	}
+}
+
+func suppressedNote(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (+%d similar suppressed)", n)
+}
+
+type session struct {
+	sconn   *ssh.ServerConn
+	allowed map[uint32]bool
+	mu      sync.Mutex
+	fwds    map[uint32]net.Listener
+	reg     *monitor.Registry
+	store   *monitor.TrafficStore
+	id      string
+	name    string
+	done    chan struct{} // closed once the session's listeners are released
+}
+
+func handleConn(c net.Conn, sconf *ssh.ServerConfig, reg *monitor.Registry, mgr *sessionManager, store *monitor.TrafficStore) {
+	// Bound the handshake so scanners / half-open connections don't accumulate.
+	_ = c.SetReadDeadline(time.Now().Add(getTunables().HandshakeTimeout))
+	began := time.Now()
+	sconn, chans, reqs, err := ssh.NewServerConn(c, sconf)
+	if err != nil {
+		// Handshake/auth failure (includes scans). Recorded and logged so that
+		// "connections arrive but never complete" is distinguishable from
+		// "nothing arrives at all" (the two look the same from the client).
+		ip, _, _ := net.SplitHostPort(c.RemoteAddr().String())
+		known := reg.ClientAt(ip)
+		// A connection that closes at once without a handshake is what a
+		// client's pre-flight probe or a TCP port check looks like: counted as
+		// "seen" but neither kept nor logged.
+		trivial := errors.Is(err, io.EOF) && time.Since(began) < 2*time.Second
+		msg := describeHandshakeErr(err) // before Record: it reads HandshakeTimeout
+		logIt, n := reg.Attempts().Record(ip, known, time.Since(began), errors.New(msg), known != "", trivial)
+		if logIt {
+			who := "unknown IP"
+			if known != "" {
+				who = "known client " + known
+			}
+			log.Printf("tunnelserver: handshake failed from %s (%s) after %s: %s%s",
+				c.RemoteAddr(), who, time.Since(began).Round(time.Millisecond),
+				msg, suppressedNote(n))
+		}
+		return
+	}
+	_ = c.SetReadDeadline(time.Time{}) // clear: tunnels are long-lived
+	defer sconn.Close()
+	s := &session{
+		sconn:   sconn,
+		allowed: parsePorts(sconn.Permissions.Extensions["ports"]),
+		fwds:    map[uint32]net.Listener{},
+		reg:     reg,
+		store:   store,
+		id:      sconn.RemoteAddr().String(),
+		name:    sconn.Permissions.Extensions["name"],
+		done:    make(chan struct{}),
+	}
+	name := s.name
+	ip, _, _ := net.SplitHostPort(sconn.RemoteAddr().String())
+	reg.Attempts().Record(ip, name, time.Since(began), nil, false, false)
+	reg.Add(s.id, &monitor.Client{Name: name, IP: ip, Since: time.Now()})
+	defer reg.Del(s.id)
+	log.Printf("tunnelserver: client %s (%s) authenticated (ports %v)",
+		name, sconn.RemoteAddr(), keys(s.allowed))
+
+	// Evict any previous (stale) session of the same client and wait for it to
+	// release its listeners, so this reconnect reclaims its ports at once.
+	mgr.register(s)
+	defer mgr.unregister(s)
+
+	// Server -> client keepalive: frees the listeners fast when the link dies.
+	go s.keepalive()
+
+	// Tunnels only: we reject sessions/shells.
+	go func() {
+		for nc := range chans {
+			nc.Reject(ssh.Prohibited, "tunnels only")
+		}
+	}()
+
+	for req := range reqs {
+		switch req.Type {
+		case "tcpip-forward":
+			s.startForward(req)
+		case "cancel-tcpip-forward":
+			s.cancelForward(req)
+		default:
+			if req.WantReply {
+				req.Reply(false, nil)
+			}
+		}
+	}
+	s.closeAll()
+	close(s.done)
+}
+
+// keepalive probes the client until the session ends; a failed or unanswered
+// probe closes the connection, which ends the request loop and frees the
+// listeners.
+func (s *session) keepalive() {
+	t := time.NewTicker(getTunables().KeepaliveInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-t.C:
+			if !s.probe() {
+				s.sconn.Close()
+				return
+			}
+		}
+	}
+}
+
+// probe sends one keepalive and reports whether the client answered within
+// KeepaliveTimeout. Closing the connection (by the caller, or by the session
+// ending) unblocks the SendRequest goroutine, so it never outlives the session.
+func (s *session) probe() bool {
+	res := make(chan error, 1)
+	go func() {
+		_, _, err := s.sconn.SendRequest("keepalive@openssh.com", true, nil)
+		res <- err
+	}()
+	kt := getTunables().KeepaliveTimeout
+	timer := time.NewTimer(kt)
+	defer timer.Stop()
+	select {
+	case err := <-res:
+		return err == nil
+	case <-timer.C:
+		log.Printf("tunnelserver: %s (%s) keepalive unanswered for %s, closing session",
+			s.name, s.sconn.RemoteAddr(), kt)
+		return false
+	case <-s.done:
+		return true // session already ending; keepalive() exits on its next select
+	}
+}
+
+// startForward handles a client's "-R <port>": it opens the listener and
+// forwards each incoming connection to the client over a forwarded-tcpip channel.
+func (s *session) startForward(req *ssh.Request) {
+	var p struct {
+		Addr string
+		Port uint32
+	}
+	if ssh.Unmarshal(req.Payload, &p) != nil || !s.allowed[p.Port] {
+		if req.WantReply {
+			req.Reply(false, nil) // port not allowed by permitlisten
+		}
+		return
+	}
+	ln, err := listenReuse(p.Port)
+	if err != nil {
+		// Should not happen after eviction, but log it so a stuck port is visible
+		// on the panel (the client's forward stays down until it reconnects).
+		log.Printf("tunnelserver: %s cannot bind port %d: %v", s.name, p.Port, err)
+		if req.WantReply {
+			req.Reply(false, nil)
+		}
+		return
+	}
+	s.mu.Lock()
+	s.fwds[p.Port] = ln
+	s.mu.Unlock()
+	if req.WantReply {
+		req.Reply(true, nil)
+	}
+	if s.reg != nil {
+		s.reg.AddPort(s.id, p.Port)
+	}
+	log.Printf("tunnelserver: %s forwards port %d", s.sconn.RemoteAddr(), p.Port)
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go s.pipe(p.Addr, p.Port, conn)
+		}
+	}()
+}
+
+// countW counts the bytes written, for the traffic statistics.
+type countW struct {
+	w   io.Writer
+	add func(int)
+}
+
+func (c countW) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	if c.add != nil {
+		c.add(n)
+	}
+	return n, err
+}
+
+func (s *session) pipe(bindAddr string, bindPort uint32, c net.Conn) {
+	defer c.Close()
+	// Traffic/connection counters (client's perspective: rx = receives,
+	// tx = sends). They are counted in the session (rate/sparklines) and in the
+	// persisted store (by port and by day).
+	var cl *monitor.Client
+	if s.reg != nil {
+		cl = s.reg.Get(s.id)
+	}
+	if cl != nil {
+		cl.ConnOpen()
+		defer cl.ConnClose()
+	}
+	addRx := func(n int) {
+		if cl != nil {
+			cl.AddRx(n)
+		}
+		if s.store != nil {
+			s.store.Add(s.name, bindPort, 0, uint64(n))
+		}
+	}
+	addTx := func(n int) {
+		if cl != nil {
+			cl.AddTx(n)
+		}
+		if s.store != nil {
+			s.store.Add(s.name, bindPort, uint64(n), 0)
+		}
+	}
+	oh, op, _ := net.SplitHostPort(c.RemoteAddr().String())
+	opn, _ := strconv.Atoi(op)
+	payload := ssh.Marshal(&struct {
+		Addr     string
+		Port     uint32
+		OrigAddr string
+		OrigPort uint32
+	}{bindAddr, bindPort, oh, uint32(opn)})
+	ch, chReqs, err := s.sconn.OpenChannel("forwarded-tcpip", payload)
+	if err != nil {
+		return
+	}
+	defer ch.Close()
+	go ssh.DiscardRequests(chReqs)
+	go func() { io.Copy(countW{ch, addRx}, c); ch.CloseWrite() }() // incoming -> client
+	io.Copy(countW{c, addTx}, ch)                                  // client -> incoming
+}
+
+func (s *session) cancelForward(req *ssh.Request) {
+	var p struct {
+		Addr string
+		Port uint32
+	}
+	ssh.Unmarshal(req.Payload, &p)
+	s.mu.Lock()
+	if ln, ok := s.fwds[p.Port]; ok {
+		ln.Close()
+		delete(s.fwds, p.Port)
+	}
+	s.mu.Unlock()
+	if req.WantReply {
+		req.Reply(true, nil)
+	}
+}
+
+func (s *session) closeAll() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, ln := range s.fwds {
+		ln.Close()
+	}
+	s.fwds = map[uint32]net.Listener{}
+}
+
+// --- session manager: one live session per client name ---
+//
+// The monitor Registry is keyed by remote address, so a stale session and a
+// reconnecting one coexist there. The manager is keyed by NAME so that a new
+// connection can evict the previous one and take over its ports.
+type sessionManager struct {
+	mu     sync.Mutex
+	byName map[string]*session
+}
+
+func newSessionManager() *sessionManager {
+	return &sessionManager{byName: map[string]*session{}}
+}
+
+func (m *sessionManager) register(s *session) {
+	if s.name == "" {
+		return
+	}
+	m.mu.Lock()
+	old := m.byName[s.name]
+	m.byName[s.name] = s
+	m.mu.Unlock()
+	if old == nil || old == s {
+		return
+	}
+	log.Printf("tunnelserver: %s reconnected, evicting stale session %s", s.name, old.id)
+	old.sconn.Close() // ends its request loop -> closeAll frees the listeners
+	ew := getTunables().EvictWait
+	select {
+	case <-old.done:
+	case <-time.After(ew):
+		log.Printf("tunnelserver: stale session %s did not release ports within %s", old.id, ew)
+	}
+}
+
+func (m *sessionManager) unregister(s *session) {
+	if s.name == "" {
+		return
+	}
+	m.mu.Lock()
+	if m.byName[s.name] == s {
+		delete(m.byName, s.name)
+	}
+	m.mu.Unlock()
+}
+
+// listenReuse binds a forwarded port with SO_REUSEADDR (Go sets it by default),
+// on all interfaces, matching the previous behaviour.
+func listenReuse(port uint32) (net.Listener, error) {
+	return net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
+}
+
+// --- auth / host key ---
+
+// authStore reloads authorized_keys when its mtime changes, so keys can be added
+// or rotated WITHOUT restarting the server (just update the file).
+// keyInfo: allowed ports (csv) and name (the key's comment).
+type keyInfo struct {
+	Ports string
+	Name  string
+}
+
+type authStore struct {
+	path  string
+	mu    sync.Mutex
+	mtime time.Time
+	keys  map[string]keyInfo // fingerprint -> info
+}
+
+func (a *authStore) reload() (bool, error) {
+	st, err := os.Stat(a.path)
+	if err != nil {
+		return false, err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.keys != nil && st.ModTime().Equal(a.mtime) {
+		return false, nil
+	}
+	m, err := loadAuthorized(a.path)
+	if err != nil {
+		return false, err
+	}
+	a.keys, a.mtime = m, st.ModTime()
+	return true, nil
+}
+
+func (a *authStore) lookup(fp string) (keyInfo, bool) {
+	if changed, err := a.reload(); changed && err == nil {
+		log.Printf("tunnelserver: authorized_keys reloaded (%d keys)", len(a.keys))
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	v, ok := a.keys[fp]
+	return v, ok
+}
+
+func loadAuthorized(path string) (map[string]keyInfo, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]keyInfo{}
+	for len(data) > 0 {
+		key, comment, options, rest, err := ssh.ParseAuthorizedKey(data)
+		if err != nil {
+			break
+		}
+		data = rest
+		var ports []string
+		for _, o := range options {
+			if strings.HasPrefix(o, "permitlisten=") {
+				v := strings.Trim(strings.TrimPrefix(o, "permitlisten="), "\"")
+				if _, ps, err := net.SplitHostPort(v); err == nil {
+					v = ps // accepts "host:port"
+				}
+				if _, err := strconv.Atoi(v); err == nil {
+					ports = append(ports, v)
+				}
+			}
+		}
+		out[ssh.FingerprintSHA256(key)] = keyInfo{Ports: strings.Join(ports, ","), Name: comment}
+	}
+	return out, nil
+}
+
+func loadOrCreateHostKey(path string) (ssh.Signer, error) {
+	if data, err := os.ReadFile(path); err == nil {
+		return ssh.ParsePrivateKey(data)
+	}
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	block, err := ssh.MarshalPrivateKey(priv, "tunnelkit")
+	if err != nil {
+		return nil, err
+	}
+	if path != "" {
+		_ = os.WriteFile(path, pem.EncodeToMemory(block), 0o600)
+	}
+	return ssh.NewSignerFromKey(priv)
+}
+
+func parsePorts(csv string) map[uint32]bool {
+	m := map[uint32]bool{}
+	for _, p := range strings.Split(csv, ",") {
+		if n, err := strconv.Atoi(strings.TrimSpace(p)); err == nil {
+			m[uint32(n)] = true
+		}
+	}
+	return m
+}
+
+func keys(m map[uint32]bool) []uint32 {
+	out := make([]uint32, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}

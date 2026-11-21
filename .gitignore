@@ -1,0 +1,5 @@
+/tunnelkit
+/tunnelkit-*
+!/tunnelkit-client/
+*.exe
+/dist/
