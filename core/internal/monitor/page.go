@@ -1,0 +1,246 @@
+package monitor
+
+const page = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Tunnelkit</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, noarchive, nosnippet">
+<style>
+  :root{color-scheme:light dark;--bg:#f5f6f8;--fg:#1b1f24;--muted:#62707f;--card:#fff;
+    --border:#e1e4e8;--up:#1a7f37;--up-bg:#dafbe1;--down:#cf222e;--down-bg:#ffebe9;
+    --warn:#9a6700;--warn-bg:#fff8c5;--rx:#1a7f37;--tx:#0969da;--accent:#0969da;}
+  @media (prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#8b949e;
+    --card:#161b22;--border:#30363d;--up:#3fb950;--up-bg:#12261b;--down:#f85149;
+    --down-bg:#2b1414;--warn:#d29922;--warn-bg:#2b2412;--rx:#3fb950;--tx:#58a6ff;--accent:#58a6ff;}}
+  *{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:var(--bg);color:var(--fg);padding:1.5rem}
+  h1{font-size:1.25rem;margin:0 0 .25rem}h3{margin:.8rem 0 .3rem;font-size:.95rem}h4{margin:.8rem 0 .3rem;font-size:.85rem}h4 .muted{font-weight:400}.sub{color:var(--muted);font-size:.85rem;margin-bottom:1rem}
+  .summary{display:flex;gap:.75rem;flex-wrap:wrap;margin-bottom:1rem}
+  .pill{padding:.35rem .75rem;border-radius:999px;font-size:.85rem;background:var(--card);border:1px solid var(--border)}
+  .wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;background:var(--card);
+    border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  th,td{text-align:left;padding:.5rem .8rem;border-bottom:1px solid var(--border);font-size:.85rem;white-space:nowrap;vertical-align:middle}
+  th{color:var(--muted);font-weight:600}#hdr th{cursor:pointer;user-select:none}#hdr th:hover{color:var(--fg)}
+  #q{font:inherit;font-size:.85rem;padding:.35rem .7rem;margin-bottom:.8rem;width:100%;max-width:18rem;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--fg)}tr:last-child td{border-bottom:none}
+  .badge{display:inline-flex;align-items:center;gap:.4rem;padding:.15rem .6rem;border-radius:999px;font-size:.8rem;font-weight:600}
+  .up{color:var(--up);background:var(--up-bg)}
+  .down{color:var(--muted);background:var(--border)}
+  button.badge{border:none;font:inherit;cursor:pointer}
+  button.link.hi{background:none;text-decoration:underline}
+  tr.offline td{color:var(--muted);opacity:.75}
+  .dot{width:.5rem;height:.5rem;border-radius:50%;background:currentColor}
+  .mono{font-variant-numeric:tabular-nums}.muted{color:var(--muted)}
+  .hi{color:var(--warn);background:var(--warn-bg);padding:.1rem .5rem;border-radius:999px;font-weight:600}
+  button{font:inherit;padding:.25rem .6rem;border-radius:6px;border:1px solid var(--border);
+    background:var(--card);color:var(--accent);cursor:pointer}button:hover{border-color:var(--accent)}
+  button:disabled{opacity:.5;cursor:wait}
+  .link{border:none;background:none;padding:0;text-decoration:underline;text-underline-offset:2px}
+  a.svc{color:var(--accent);font-weight:700;text-decoration:none}a.svc:hover{text-decoration:underline}
+  svg{display:block}.spark{display:flex;align-items:center;gap:.5rem}
+  dialog{border:1px solid var(--border);border-radius:10px;background:var(--card);color:var(--fg);
+    padding:1.2rem;max-width:90vw;box-shadow:0 8px 30px rgba(0,0,0,.3)}
+  dialog::backdrop{background:rgba(0,0,0,.4)}
+</style></head><body>
+  <h1>Tunnelkit</h1>
+  <div class="sub">Self-hosted server tunnels · <span id="gen" class="muted"></span></div>
+  <div class="summary" id="sum"></div>
+  <input id="q" type="search" placeholder="Search by name…" autocomplete="off" oninput="tick()">
+  <div class="wrap"><table><thead><tr id="hdr">
+    <th data-k="name">Client</th><th data-k="status">Status</th><th data-k="ip">Source IP</th><th data-k="uptime">Uptime</th><th data-k="active">Conns</th>
+    <th data-k="rec">Reconns</th><th data-k="lat">Latency</th><th data-k="traf">Traffic ↓/↑ · today</th><th data-k="speed">Speedtest</th><th data-k="avail">Availability 24h</th>
+  </tr></thead><tbody id="rows"></tbody></table></div>
+  <dialog id="dlg"><div id="dlgc"></div><br>
+    <button onclick="document.getElementById('dlg').close()">Close</button></dialog>
+<script>
+function fmtU(s){if(s==null)return '-';s=Math.floor(s);const d=Math.floor(s/86400);s%=86400;
+  const h=Math.floor(s/3600);s%=3600;const m=Math.floor(s/60);
+  if(d)return d+'d '+h+'h '+m+'m';if(h)return h+'h '+m+'m';return m+'m';}
+function fmtR(n){if(!n)return '0';const u=['','K','M','G'];let i=0;n*=8;
+  while(n>=1000&&i<3){n/=1000;i++;}return n.toFixed(i?1:0)+u[i]+'bps';}
+function fmtB(n){if(!n)return '0 B';const u=['B','KB','MB','GB','TB'];let i=0;
+  while(n>=1024&&i<4){n/=1024;i++;}return n.toFixed(i?1:0)+' '+u[i];}
+// Everything that comes from the operator (names, titles, URLs) goes through
+// esc() before it is put in HTML; A() makes a name safe inside an onclick attribute.
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(ch){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];});}
+function A(s){return esc(JSON.stringify(String(s)));}
+function T(name){const c=LAST[name];return esc((c&&c.title)||name);}
+function safeHref(u){return /^https?:\/\//i.test(u||'')?u:'';}
+// The default port (flagged by the server: the first one in clients.json with an
+// http(s) URL) gives the URL the client's name opens.
+function nameUrl(c){var d=(c.port_info||[]).find(p=>p.default&&safeHref(p.url));return d?d.url:'';}
+function spark(vals,w,h,color){
+  if(!vals||!vals.length)return '<svg width="'+w+'" height="'+h+'"></svg>';
+  const max=Math.max(1,...vals);const dx=w/Math.max(1,vals.length-1);
+  const pts=vals.map((v,i)=>(i*dx).toFixed(1)+','+(h-(v/max)*(h-2)-1).toFixed(1)).join(' ');
+  return '<svg width="'+w+'" height="'+h+'"><polyline fill="none" stroke="'+color+'" stroke-width="1.5" points="'+pts+'"/></svg>';}
+// A measurement lasts ~12 s but the table is redrawn every 5 s, so its state
+// lives here (not in the button) and the redraw keeps showing it.
+var MEAS={},MRES={};
+async function speed(name){
+  if(MEAS[name])return;
+  MEAS[name]=1;delete MRES[name];tick();
+  try{const r=await fetch('/api/speedtest?client='+encodeURIComponent(name));
+    if(!r.ok)throw new Error((await r.text()).trim()||('HTTP '+r.status));
+    const d=await r.json();MRES[name]=d.down.toFixed(1)+'↓ '+d.up.toFixed(1)+'↑ Mbps';
+  }catch(e){MRES[name]='error: '+e.message;}
+  delete MEAS[name];tick();}
+async function openTraffic(name){
+  const dlg=document.getElementById('dlg'),c=document.getElementById('dlgc');
+  c.innerHTML='loading…';dlg.showModal();
+  try{const d=await (await fetch('/api/traffic?client='+encodeURIComponent(name))).json();
+    let h='<h3>'+T(name)+' — traffic by port</h3><table><tr><th>Port</th><th>↓ received</th><th>↑ sent</th></tr>';
+    (d.ports||[]).forEach(p=>h+='<tr><td class=mono>'+p.port+'</td><td class=mono>'+fmtB(p.rx)+'</td><td class=mono>'+fmtB(p.tx)+'</td></tr>');
+    if(!(d.ports||[]).length)h+='<tr><td colspan=3 class=muted>no data</td></tr>';
+    h+='</table><h3>Traffic by day</h3><table><tr><th>Date</th><th>Total</th></tr>';
+    (d.days||[]).forEach(x=>h+='<tr><td class=mono>'+x.date+'</td><td class=mono>'+fmtB(x.bytes)+'</td></tr>');
+    if(!(d.days||[]).length)h+='<tr><td colspan=2 class=muted>no data</td></tr>';
+    h+='</table>';c.innerHTML=h;
+  }catch(e){c.innerHTML='error: '+e;}}
+var LAST={};
+function recBars(pts,w,h){
+  if(!pts.length)return '<svg width="'+w+'" height="'+h+'"></svg>';
+  const max=Math.max(1,...pts.map(p=>p.d));const bw=w/pts.length;let s='';
+  pts.forEach((p,i)=>{const bh=p.d>0?Math.max(2,(p.d/max)*(h-16)):0;
+    s+='<rect x="'+(i*bw).toFixed(1)+'" y="'+(h-14-bh).toFixed(1)+'" width="'+Math.max(1,bw-1).toFixed(1)+'" height="'+bh.toFixed(1)+'" fill="'+(p.d>0?'var(--warn)':'transparent')+'"/>';});
+  s+='<line x1="0" y1="'+(h-14)+'" x2="'+w+'" y2="'+(h-14)+'" stroke="var(--border)"/>';
+  return '<svg width="'+w+'" height="'+h+'" style="max-width:100%">'+s+'</svg>';}
+function openRec(name){
+  const c=LAST[name];if(!c)return;
+  const dlg=document.getElementById('dlg'),el=document.getElementById('dlgc');
+  const h=c.hist||[];const pts=[];let win=0,lastTs=0;
+  for(let i=1;i<h.length;i++){let d=(h[i].rec||0)-(h[i-1].rec||0);if(d<0)d=0;pts.push({t:h[i].ts,d:d});if(d>0){win+=d;lastTs=h[i].ts;}}
+  const spanS=h.length>1?(h[h.length-1].ts-h[0].ts):0;
+  const perHour=spanS>0?(win*3600/spanS):0;
+  let html='<h3>'+T(name)+' — reconnections</h3>';
+  html+='<div class="mono" style="margin:.3rem 0 .6rem">all-time total: <b>'+(c.reconnects||0)+'</b> · in window ('+fmtU(spanS)+'): <b>'+win+'</b> · ~'+perHour.toFixed(1)+'/h'+(lastTs?' · last drop: '+new Date(lastTs*1000).toLocaleTimeString():' · no drops in window')+'</div>';
+  html+=recBars(pts,520,90);
+  html+='<div class="muted" style="font-size:.75rem;margin-top:.3rem">each bar = reconnections in that interval (~5s); window ~10 min</div>';
+  el.innerHTML=html;dlg.showModal();}
+function portsLine(c){
+  const pi=c.port_info||[];
+  const parts=pi.length?pi.map(p=>(p.name?esc(p.name)+' ':'')+':'+p.port):(c.ports||[]).map(p=>':'+p);
+  return (c.title?esc(c.name)+'<br>':'')+parts.join(' · ');}
+async function probePort(name,port,btn){
+  const out=document.getElementById('pr'+port);
+  btn.disabled=true;out.style.color='var(--muted)';out.textContent='testing…';
+  try{
+    const r=await fetch('/api/probe?client='+encodeURIComponent(name)+'&port='+port,{cache:'no-store'});
+    if(!r.ok){out.style.color='var(--warn)';out.textContent=(await r.text()).trim();}
+    else{const d=await r.json();
+      out.style.color=d.level==='ok'?'var(--up)':(d.level==='warn'?'var(--warn)':'var(--down)');
+      out.textContent=d.message+(d.latency_ms?' · '+d.latency_ms.toFixed(0)+' ms':'');}
+  }catch(e){out.style.color='var(--down)';out.textContent='error: '+e;}
+  btn.disabled=false;}
+function openLinks(name){
+  const dlg=document.getElementById('dlg'),el=document.getElementById('dlgc');
+  const c=LAST[name]||{};
+  let html='<h3>'+T(name)+'</h3>';
+  if(c.title)html+='<div class="mono muted" style="margin:-.2rem 0 .5rem">'+esc(name)+'</div>';
+  const pi=c.port_info||[];
+  if(pi.length){
+    html+='<table><tr><th>Port</th><th>Service</th><th>URL</th><th title="its URL opens from the client name">Default</th><th>Check</th></tr>';
+    pi.forEach(p=>{
+      const fwd=(c.ports||[]).indexOf(p.port)>=0;
+      const def=!!p.default;
+      const u=p.url||'';
+      const href=safeHref(u);
+      const url=!u?'<span class="muted">-</span>':(href?'<a class="svc" href="'+esc(href)+'" target="_blank" rel="noopener">'+esc(u.replace(/^https?:\/\//i,''))+'</a>':'<span class="mono">'+esc(u)+'</span>');
+      const chk=fwd?'<button onclick="probePort('+A(name)+','+p.port+',this)">Test</button> <span id="pr'+p.port+'" class="mono"></span>':'<span class="muted">not forwarded now</span>';
+      html+='<tr><td class="mono">'+p.port+'</td><td>'+(p.name?esc(p.name):'<span class="muted">-</span>')+'</td><td>'+url+'</td><td style="text-align:center"'+(def?' title="default: its URL opens from the client name"':'')+'>'+(def?'✓':'')+'</td><td style="white-space:normal">'+chk+'</td></tr>';});
+    html+='</table>';}
+  else html+='<div class="muted">nothing to show: no forwarded ports (see clients.json)</div>';
+  el.innerHTML=html;dlg.showModal();}
+function upCompute(events,from,to){
+  const span=to-from;
+  if(!events||!events.length)return {pct:null,segs:[{a:0,b:1,u:'nd'}]};
+  const ds=events[0].t;let ef=from;if(ds>ef)ef=ds;
+  let st=events[0].u;for(let i=0;i<events.length;i++){if(events[i].t<=ef)st=events[i].u;else break;}
+  let segs=[];if(ef>from)segs.push({a:0,b:(ef-from)/span,u:'nd'});
+  let cursor=ef,cur=st,upDur=0;
+  for(let i=0;i<events.length;i++){const e=events[i];if(e.t<=ef)continue;if(e.t>=to)break;
+    segs.push({a:(cursor-from)/span,b:(e.t-from)/span,u:cur?'up':'down'});if(cur)upDur+=e.t-cursor;cursor=e.t;cur=e.u;}
+  segs.push({a:(cursor-from)/span,b:1,u:cur?'up':'down'});if(cur)upDur+=to-cursor;
+  const cov=to-ef;return {pct:cov>0?upDur/cov*100:null,segs:segs};}
+function upBarSvg(segs,w,h){let s='';segs.forEach(g=>{const x=g.a*w,ww=Math.max(0.5,(g.b-g.a)*w);
+  const col=g.u==='up'?'var(--up)':(g.u==='down'?'var(--down)':'var(--border)');
+  s+='<rect x="'+x.toFixed(1)+'" y="0" width="'+ww.toFixed(1)+'" height="'+h+'" fill="'+col+'"/>';});
+  return '<svg width="'+w+'" height="'+h+'" style="border-radius:3px;max-width:100%">'+s+'</svg>';}
+function upColor(p){return p>=99.5?'var(--up)':(p>=95?'var(--warn)':'var(--down)');}
+function upCell(c){const p=c.uptime_24h;
+  if(p==null||p<0)return '<span class="muted">—</span>';
+  const txt=(p>=99.95?p.toFixed(0):p.toFixed(1))+'%';
+  return '<button class="link mono" style="color:'+upColor(p)+'" onclick="openUptime('+A(c.name)+')" title="availability 24h/7d">'+txt+'</button>';}
+async function openUptime(name){
+  const dlg=document.getElementById('dlg'),el=document.getElementById('dlgc');
+  el.innerHTML='loading…';dlg.showModal();
+  try{const d=await (await fetch('/api/uptime?client='+encodeURIComponent(name),{cache:'no-store'})).json();
+    const ev=(d.events||[]);const now=d.now||Math.floor(Date.now()/1000);
+    function block(label,win){const r=upCompute(ev,now-win,now);
+      const pct=r.pct==null?'no data':r.pct.toFixed(2)+'%';
+      return '<div style="margin:.2rem 0 .7rem"><div class="mono" style="margin-bottom:.25rem">'+label+' · availability <b style="color:'+(r.pct==null?'var(--muted)':upColor(r.pct))+'">'+pct+'</b></div>'+upBarSvg(r.segs,560,22)+'</div>';}
+    let h='<h3 style="margin-bottom:.4rem">'+T(name)+' — availability</h3>';
+    h+=block('Last 24 h',86400)+block('Last 7 days',7*86400);
+    h+='<div class="muted" style="font-size:.72rem">green = connected · red = down · grey = no data</div>';
+    el.innerHTML=h;
+  }catch(e){el.innerHTML='error: '+e;}}
+let SORT={k:null,d:1};
+const SORT_KEYS={name:c=>(c.title||c.name).toLowerCase(),status:c=>c.connected===false?0:1,
+  ip:c=>c.connected===false?null:c.ip||null,
+  uptime:c=>c.connected===false?null:(c.uptime_seconds||0),active:c=>c.connected===false?null:(c.active||0),
+  rec:c=>c.connected===false?null:(c.reconnects||0),lat:c=>c.connected===false?null:(c.latency_ms||null),
+  traf:c=>c.traffic_today||0,speed:c=>c.last_down||null,avail:c=>(c.uptime_24h==null||c.uptime_24h<0)?null:c.uptime_24h};
+document.getElementById('hdr').addEventListener('click',e=>{const th=e.target.closest('th');if(!th)return;
+  const k=th.dataset.k;
+  if(SORT.k===k){if(SORT.d===(k==='name'||k==='ip'?-1:1)){SORT={k:null,d:1};}else SORT.d=-SORT.d;}
+  else SORT={k:k,d:(k==='name'||k==='ip')?1:-1};
+  tick();});
+async function tick(){try{
+  const d=await (await fetch('/api/status',{cache:'no-store'})).json();
+  document.getElementById('gen').textContent=d.generated_at?'updated '+new Date(d.generated_at*1000).toLocaleTimeString():'';
+  const all=d.clients||[];
+  LAST={};all.forEach(c=>LAST[c.name]=c);
+  const qv=document.getElementById('q').value.trim().toLowerCase();
+  const cs=qv?all.filter(c=>(c.name+' '+(c.title||'')).toLowerCase().includes(qv)):all;
+  const on=cs.filter(c=>c.connected!==false);
+  const off=cs.filter(c=>c.connected===false).sort((a,b)=>(b.offline_seconds||0)-(a.offline_seconds||0));
+  document.getElementById('sum').innerHTML='<span class="pill">'+on.length+' connected</span>'+
+    (off.length?'<span class="pill">'+off.length+' offline</span>':'')+
+    '<span class="pill">'+on.reduce((a,c)=>a+(c.active||0),0)+' active connections</span>'+
+    '<span class="pill">'+fmtB(cs.reduce((a,c)=>a+(c.traffic_today||0),0))+' today</span>'+
+    '<span class="pill">'+on.reduce((a,c)=>a+(c.reconnects||0),0)+' reconnections</span>';
+  const offRow=c=>{
+    return '<tr class="offline"><td><b>'+esc(c.title||c.name)+'</b>'+(c.title?'<br><span class="mono muted" style="font-size:.75rem">'+esc(c.name)+'</span>':'')+'</td>'+
+      '<td><span class="badge down"><span class="dot"></span>OFF</span></td><td class="mono">-</td>'+
+      '<td class="mono" title="time disconnected">offline '+fmtU(c.offline_seconds)+'</td><td class="mono">-</td>'+
+      '<td class="mono">-</td><td class="mono">-</td>'+
+      '<td class="mono">'+fmtB(c.traffic_today||0)+'</td><td class="mono">-</td><td>'+upCell(c)+'</td></tr>';
+  };
+  const onRow=c=>{
+    const rc='<button class="link mono'+((c.reconnects||0)>=5?' hi':'')+'" onclick="openRec('+A(c.name)+')" title="drops over time">'+(c.reconnects||0)+((c.reconnects||0)>=5?' ⚠':'')+'</button>';
+    const h=c.hist||[];const rx=h.map(s=>s.rx),tx=h.map(s=>s.tx);
+    const traf='<div class="spark"><div>'+spark(rx,60,20,'var(--rx)')+spark(tx,60,10,'var(--tx)')+'</div>'+
+      '<button class="link mono" onclick="openTraffic('+A(c.name)+')" title="view by port/day">'+fmtB(c.traffic_today)+'</button></div>';
+    let sp='<span class="muted">—</span>';
+    if(c.speedtest){const _m=!!MEAS[c.name],_r=MRES[c.name]||(c.last_down?c.last_down.toFixed(1)+'↓ '+c.last_up.toFixed(1)+'↑':'');
+      sp='<div class="spark"><button onclick="speed('+A(c.name)+')"'+(_m?' disabled':'')+'>'+(_m?'measuring… (~12 s)':'Measure')+'</button>'+
+      '<span class="res mono muted">'+esc(_r)+'</span>'+
+      spark(c.speed_hist,50,20,'var(--accent)')+'</div>';}
+    const _u=nameUrl(c);
+    const _t=esc(c.title||c.name);
+    const nm=_u?'<a class="svc" href="'+esc(_u)+'" target="_blank" rel="noopener" title="open the default URL">'+_t+'</a>':'<b>'+_t+'</b>';
+    return '<tr><td>'+nm+'<br><span class="mono muted" style="font-size:.75rem">'+portsLine(c)+'</span></td>'+
+      '<td><button class="badge up linkbadge" onclick="openLinks('+A(c.name)+')" title="tunnel ports"><span class="dot"></span>ON</button></td><td class="mono">'+(c.ip||'-')+'</td>'+
+      '<td class="mono">'+fmtU(c.uptime_seconds)+'</td><td class="mono">'+(c.active||0)+'</td>'+
+      '<td>'+rc+'</td><td class="mono muted">'+(c.latency_ms?c.latency_ms.toFixed(0)+' ms':'-')+'</td>'+
+      '<td>'+traf+'</td><td>'+sp+'</td><td>'+upCell(c)+'</td></tr>';
+  };
+  let list=on.concat(off);
+  if(SORT.k){const g=SORT_KEYS[SORT.k];
+    list=list.slice().sort((a,b)=>{const x=g(a),y=g(b);
+      if(x==null&&y==null)return 0;if(x==null)return 1;if(y==null)return -1;
+      return (typeof x==='string'?x.localeCompare(y):x-y)*SORT.d;});}
+  document.querySelectorAll('#hdr th').forEach(th=>{
+    th.textContent=th.textContent.replace(/ [▲▼]$/,'')+(th.dataset.k===SORT.k?(SORT.d>0?' ▲':' ▼'):'');});
+  document.getElementById('rows').innerHTML=(list.map(c=>c.connected===false?offRow(c):onRow(c)).join(''))||'<tr><td colspan="10" class="muted">no clients</td></tr>';
+}catch(e){document.getElementById('sum').innerHTML='<span class="pill">'+e+'</span>';}}
+tick();setInterval(tick,5000);
+</script></body></html>`
