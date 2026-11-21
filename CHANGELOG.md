@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-11-21
+
+### Added
+- Panel: click a column header to sort the table (click again to reverse, a third time to reset) and a search box to filter clients by name.
+
+### Changed
+- Examples, tests and compose comments no longer mention link templates or the `tk-` prefix.
+
 ## [0.2.7] - 2026-11-19
 
 ### Removed

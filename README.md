@@ -309,7 +309,7 @@ scrape_configs:
 Install the package and configure it via UCI:
 
 ```bash
-opkg install tunnelkit_0.2.7-1_<arch>.ipk
+opkg install tunnelkit_0.2.8-1_<arch>.ipk
 # edit /etc/config/tunnelkit
 /etc/init.d/tunnelkit enable
 /etc/init.d/tunnelkit start

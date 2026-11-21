@@ -19,7 +19,8 @@ const page = `<!doctype html>
   .wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;background:var(--card);
     border:1px solid var(--border);border-radius:8px;overflow:hidden}
   th,td{text-align:left;padding:.5rem .8rem;border-bottom:1px solid var(--border);font-size:.85rem;white-space:nowrap;vertical-align:middle}
-  th{color:var(--muted);font-weight:600}tr:last-child td{border-bottom:none}
+  th{color:var(--muted);font-weight:600}#hdr th{cursor:pointer;user-select:none}#hdr th:hover{color:var(--fg)}
+  #q{font:inherit;font-size:.85rem;padding:.35rem .7rem;margin-bottom:.8rem;width:100%;max-width:18rem;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--fg)}tr:last-child td{border-bottom:none}
   .badge{display:inline-flex;align-items:center;gap:.4rem;padding:.15rem .6rem;border-radius:999px;font-size:.8rem;font-weight:600}
   .up{color:var(--up);background:var(--up-bg)}
   .down{color:var(--muted);background:var(--border)}
@@ -42,9 +43,10 @@ const page = `<!doctype html>
   <h1>Tunnelkit</h1>
   <div class="sub">Self-hosted server tunnels · <span id="gen" class="muted"></span></div>
   <div class="summary" id="sum"></div>
-  <div class="wrap"><table><thead><tr>
-    <th>Client</th><th>Status</th><th>Source IP</th><th>Uptime</th><th>Conns</th>
-    <th>Reconns</th><th>Latency</th><th>Traffic ↓/↑ · today</th><th>Speedtest</th><th>Availability 24h</th>
+  <input id="q" type="search" placeholder="Search by name…" autocomplete="off" oninput="tick()">
+  <div class="wrap"><table><thead><tr id="hdr">
+    <th data-k="name">Client</th><th data-k="status">Status</th><th data-k="ip">Source IP</th><th data-k="uptime">Uptime</th><th data-k="active">Conns</th>
+    <th data-k="rec">Reconns</th><th data-k="lat">Latency</th><th data-k="traf">Traffic ↓/↑ · today</th><th data-k="speed">Speedtest</th><th data-k="avail">Availability 24h</th>
   </tr></thead><tbody id="rows"></tbody></table></div>
   <dialog id="dlg"><div id="dlgc"></div><br>
     <button onclick="document.getElementById('dlg').close()">Close</button></dialog>
@@ -180,11 +182,24 @@ async function openUptime(name){
     h+='<div class="muted" style="font-size:.72rem">green = connected · red = down · grey = no data</div>';
     el.innerHTML=h;
   }catch(e){el.innerHTML='error: '+e;}}
+let SORT={k:null,d:1};
+const SORT_KEYS={name:c=>(c.title||c.name).toLowerCase(),status:c=>c.connected===false?0:1,
+  ip:c=>c.connected===false?null:c.ip||null,
+  uptime:c=>c.connected===false?null:(c.uptime_seconds||0),active:c=>c.connected===false?null:(c.active||0),
+  rec:c=>c.connected===false?null:(c.reconnects||0),lat:c=>c.connected===false?null:(c.latency_ms||null),
+  traf:c=>c.traffic_today||0,speed:c=>c.last_down||null,avail:c=>(c.uptime_24h==null||c.uptime_24h<0)?null:c.uptime_24h};
+document.getElementById('hdr').addEventListener('click',e=>{const th=e.target.closest('th');if(!th)return;
+  const k=th.dataset.k;
+  if(SORT.k===k){if(SORT.d===(k==='name'||k==='ip'?-1:1)){SORT={k:null,d:1};}else SORT.d=-SORT.d;}
+  else SORT={k:k,d:(k==='name'||k==='ip')?1:-1};
+  tick();});
 async function tick(){try{
   const d=await (await fetch('/api/status',{cache:'no-store'})).json();
   document.getElementById('gen').textContent=d.generated_at?'updated '+new Date(d.generated_at*1000).toLocaleTimeString():'';
-  const cs=d.clients||[];
-  LAST={};cs.forEach(c=>LAST[c.name]=c);
+  const all=d.clients||[];
+  LAST={};all.forEach(c=>LAST[c.name]=c);
+  const qv=document.getElementById('q').value.trim().toLowerCase();
+  const cs=qv?all.filter(c=>(c.name+' '+(c.title||'')).toLowerCase().includes(qv)):all;
   const on=cs.filter(c=>c.connected!==false);
   const off=cs.filter(c=>c.connected===false).sort((a,b)=>(b.offline_seconds||0)-(a.offline_seconds||0));
   document.getElementById('sum').innerHTML='<span class="pill">'+on.length+' connected</span>'+
@@ -192,14 +207,14 @@ async function tick(){try{
     '<span class="pill">'+on.reduce((a,c)=>a+(c.active||0),0)+' active connections</span>'+
     '<span class="pill">'+fmtB(cs.reduce((a,c)=>a+(c.traffic_today||0),0))+' today</span>'+
     '<span class="pill">'+on.reduce((a,c)=>a+(c.reconnects||0),0)+' reconnections</span>';
-  const offHtml=off.map(c=>{
+  const offRow=c=>{
     return '<tr class="offline"><td><b>'+esc(c.title||c.name)+'</b>'+(c.title?'<br><span class="mono muted" style="font-size:.75rem">'+esc(c.name)+'</span>':'')+'</td>'+
       '<td><span class="badge down"><span class="dot"></span>OFF</span></td><td class="mono">-</td>'+
       '<td class="mono" title="time disconnected">offline '+fmtU(c.offline_seconds)+'</td><td class="mono">-</td>'+
       '<td class="mono">-</td><td class="mono">-</td>'+
       '<td class="mono">'+fmtB(c.traffic_today||0)+'</td><td class="mono">-</td><td>'+upCell(c)+'</td></tr>';
-  }).join('');
-  document.getElementById('rows').innerHTML=(on.map(c=>{
+  };
+  const onRow=c=>{
     const rc='<button class="link mono'+((c.reconnects||0)>=5?' hi':'')+'" onclick="openRec('+A(c.name)+')" title="drops over time">'+(c.reconnects||0)+((c.reconnects||0)>=5?' ⚠':'')+'</button>';
     const h=c.hist||[];const rx=h.map(s=>s.rx),tx=h.map(s=>s.tx);
     const traf='<div class="spark"><div>'+spark(rx,60,20,'var(--rx)')+spark(tx,60,10,'var(--tx)')+'</div>'+
@@ -217,7 +232,15 @@ async function tick(){try{
       '<td class="mono">'+fmtU(c.uptime_seconds)+'</td><td class="mono">'+(c.active||0)+'</td>'+
       '<td>'+rc+'</td><td class="mono muted">'+(c.latency_ms?c.latency_ms.toFixed(0)+' ms':'-')+'</td>'+
       '<td>'+traf+'</td><td>'+sp+'</td><td>'+upCell(c)+'</td></tr>';
-  }).join('')+offHtml)||'<tr><td colspan="10" class="muted">no clients</td></tr>';
+  };
+  let list=on.concat(off);
+  if(SORT.k){const g=SORT_KEYS[SORT.k];
+    list=list.slice().sort((a,b)=>{const x=g(a),y=g(b);
+      if(x==null&&y==null)return 0;if(x==null)return 1;if(y==null)return -1;
+      return (typeof x==='string'?x.localeCompare(y):x-y)*SORT.d;});}
+  document.querySelectorAll('#hdr th').forEach(th=>{
+    th.textContent=th.textContent.replace(/ [▲▼]$/,'')+(th.dataset.k===SORT.k?(SORT.d>0?' ▲':' ▼'):'');});
+  document.getElementById('rows').innerHTML=(list.map(c=>c.connected===false?offRow(c):onRow(c)).join(''))||'<tr><td colspan="10" class="muted">no clients</td></tr>';
 }catch(e){document.getElementById('sum').innerHTML='<span class="pill">'+e+'</span>';}}
 tick();setInterval(tick,5000);
 </script></body></html>`
